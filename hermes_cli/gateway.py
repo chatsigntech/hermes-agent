@@ -1581,15 +1581,36 @@ def _detect_venv_dir() -> Path | None:
     return None
 
 
+def _detect_runtime_env_dir() -> Path | None:
+    """Return the active Python environment directory used by this process."""
+    conda_prefix = os.environ.get("CONDA_PREFIX", "").strip()
+    if conda_prefix:
+        conda_dir = Path(conda_prefix)
+        if conda_dir.is_dir():
+            return conda_dir
+
+    if sys.prefix != sys.base_prefix:
+        runtime_dir = Path(sys.prefix)
+        if runtime_dir.is_dir():
+            return runtime_dir
+
+    return _detect_venv_dir()
+
+
 def get_python_path() -> str:
-    venv = _detect_venv_dir()
-    if venv is not None:
+    current_python = Path(sys.executable).resolve()
+    if current_python.exists():
+        return str(current_python)
+
+    runtime_env = _detect_runtime_env_dir()
+    if runtime_env is not None:
         if is_windows():
-            venv_python = venv / "Scripts" / "python.exe"
+            runtime_python = runtime_env / "Scripts" / "python.exe"
         else:
-            venv_python = venv / "bin" / "python"
-        if venv_python.exists():
-            return str(venv_python)
+            runtime_python = runtime_env / "bin" / "python"
+        if runtime_python.exists():
+            return str(runtime_python)
+
     return sys.executable
 
 
@@ -1703,9 +1724,9 @@ def _hermes_home_for_target_user(target_home_dir: str) -> str:
 def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) -> str:
     python_path = get_python_path()
     working_dir = str(PROJECT_ROOT)
-    detected_venv = _detect_venv_dir()
-    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
-    venv_bin = str(detected_venv / "bin") if detected_venv else str(PROJECT_ROOT / "venv" / "bin")
+    runtime_env = _detect_runtime_env_dir()
+    venv_dir = str(runtime_env) if runtime_env else str(PROJECT_ROOT / "venv")
+    venv_bin = str(runtime_env / "bin") if runtime_env else str(PROJECT_ROOT / "venv" / "bin")
     node_bin = str(PROJECT_ROOT / "node_modules" / ".bin")
 
     path_entries = [venv_bin, node_bin]
@@ -2232,9 +2253,9 @@ def generate_launchd_plist() -> str:
     # nvm, cargo, etc.  We prepend venv/bin and node_modules/.bin (matching
     # the systemd unit), then capture the user's full shell PATH so every
     # user-installed tool (node, ffmpeg, …) is reachable.
-    detected_venv = _detect_venv_dir()
-    venv_bin = str(detected_venv / "bin") if detected_venv else str(PROJECT_ROOT / "venv" / "bin")
-    venv_dir = str(detected_venv) if detected_venv else str(PROJECT_ROOT / "venv")
+    runtime_env = _detect_runtime_env_dir()
+    venv_bin = str(runtime_env / "bin") if runtime_env else str(PROJECT_ROOT / "venv" / "bin")
+    venv_dir = str(runtime_env) if runtime_env else str(PROJECT_ROOT / "venv")
     node_bin = str(PROJECT_ROOT / "node_modules" / ".bin")
     # Resolve the directory containing the node binary (e.g. Homebrew, nvm)
     # so it's explicitly in PATH even if the user's shell PATH changes later.

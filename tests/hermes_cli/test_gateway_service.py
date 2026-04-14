@@ -951,6 +951,22 @@ class TestDetectVenvDir:
         assert result is None
 
 
+class TestDetectRuntimeEnvDir:
+    def test_detects_conda_prefix_before_project_venv(self, tmp_path, monkeypatch):
+        runtime_env = tmp_path / "miniconda3"
+        runtime_env.mkdir()
+
+        monkeypatch.setenv("CONDA_PREFIX", str(runtime_env))
+        monkeypatch.setattr("sys.prefix", "/usr")
+        monkeypatch.setattr("sys.base_prefix", "/usr")
+        monkeypatch.setattr(gateway_cli, "PROJECT_ROOT", tmp_path)
+
+        (tmp_path / ".venv").mkdir()
+
+        result = gateway_cli._detect_runtime_env_dir()
+        assert result == runtime_env
+
+
 class TestSystemUnitHermesHome:
     """HERMES_HOME in system units must reference the target user, not root."""
 
@@ -1047,22 +1063,46 @@ class TestHermesHomeForTargetUser:
         assert result == "/home/alice/.hermes"
 
 
-class TestGeneratedUnitUsesDetectedVenv:
-    def test_systemd_unit_uses_dot_venv_when_detected(self, tmp_path, monkeypatch):
-        dot_venv = tmp_path / ".venv"
-        dot_venv.mkdir()
-        (dot_venv / "bin").mkdir()
+class TestGeneratedUnitUsesRuntimeEnv:
+    def test_systemd_unit_uses_runtime_env_when_detected(self, tmp_path, monkeypatch):
+        runtime_env = tmp_path / ".venv"
+        runtime_env.mkdir()
+        (runtime_env / "bin").mkdir()
 
-        monkeypatch.setattr(gateway_cli, "_detect_venv_dir", lambda: dot_venv)
-        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(dot_venv / "bin" / "python"))
+        monkeypatch.setattr(gateway_cli, "_detect_runtime_env_dir", lambda: runtime_env)
+        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(runtime_env / "bin" / "python"))
 
         unit = gateway_cli.generate_systemd_unit(system=False)
 
-        assert f"VIRTUAL_ENV={dot_venv}" in unit
-        assert f"{dot_venv}/bin" in unit
+        assert f"VIRTUAL_ENV={runtime_env}" in unit
+        assert f"{runtime_env}/bin" in unit
         # Must NOT contain a hardcoded /venv/ path
         assert "/venv/" not in unit or "/.venv/" in unit
 
+
+class TestGeneratedUnitsUseRuntimeEnv:
+    def test_launchd_plist_prefers_active_runtime_env_over_project_venv(self, tmp_path, monkeypatch):
+        project = tmp_path / "project"
+        project.mkdir()
+
+        project_venv = project / ".venv"
+        (project_venv / "bin").mkdir(parents=True)
+
+        runtime_env = tmp_path / "miniconda3"
+        runtime_python = runtime_env / "bin" / "python3.13"
+        runtime_python.parent.mkdir(parents=True)
+        runtime_python.write_text("", encoding="utf-8")
+
+        monkeypatch.setattr(gateway_cli, "PROJECT_ROOT", project)
+        monkeypatch.setenv("CONDA_PREFIX", str(runtime_env))
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setattr(gateway_cli.sys, "executable", str(runtime_python))
+
+        plist = gateway_cli.generate_launchd_plist()
+
+        assert f"<string>{runtime_env}</string>" in plist
+        assert f"{runtime_env}/bin" in plist
+        assert f"{project_venv}/bin" not in plist
 
 class TestGeneratedUnitIncludesLocalBin:
     """~/.local/bin must be in PATH so uvx/pipx tools are discoverable."""
