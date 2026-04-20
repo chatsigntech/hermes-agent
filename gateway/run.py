@@ -77,7 +77,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Resolve Hermes home directory (respects HERMES_HOME override)
 from hermes_constants import get_hermes_home
-from utils import atomic_yaml_write, is_truthy_value
+from utils import atomic_json_write, atomic_yaml_write, is_truthy_value
 _hermes_home = get_hermes_home()
 
 # Load environment variables from ~/.hermes/.env first.
@@ -592,7 +592,7 @@ class GatewayRunner:
         self._pending_approvals: Dict[str, Dict[str, Any]] = {}
         # Track pending email reply drafts awaiting human approval.
         # Key: draft_id, Value: metadata needed to send or discard the draft.
-        self._pending_email_replies: Dict[str, Dict[str, Any]] = {}
+        self._pending_email_replies: Dict[str, Dict[str, Any]] = self._load_pending_email_replies()
 
         # Track platforms that failed to connect for background reconnection.
         # Key: Platform enum, Value: {"config": platform_config, "attempts": int, "next_retry": float}
@@ -653,6 +653,7 @@ class GatewayRunner:
     # -- Voice mode persistence ------------------------------------------
 
     _VOICE_MODE_PATH = _hermes_home / "gateway_voice_mode.json"
+    _PENDING_EMAIL_REPLIES_PATH = _hermes_home / "pending_email_replies.json"
 
     def _load_voice_modes(self) -> Dict[str, str]:
         try:
@@ -678,6 +679,29 @@ class GatewayRunner:
             )
         except OSError as e:
             logger.warning("Failed to save voice modes: %s", e)
+
+    def _load_pending_email_replies(self) -> Dict[str, Dict[str, Any]]:
+        """Restore pending email drafts held for human approval."""
+        try:
+            data = json.loads(self._PENDING_EMAIL_REPLIES_PATH.read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        restored: Dict[str, Dict[str, Any]] = {}
+        for draft_id, draft in data.items():
+            if isinstance(draft_id, str) and isinstance(draft, dict):
+                restored[draft_id] = draft
+        return restored
+
+    def _save_pending_email_replies(self) -> None:
+        """Persist pending email drafts so restarts do not lose them."""
+        try:
+            atomic_json_write(self._PENDING_EMAIL_REPLIES_PATH, self._pending_email_replies)
+        except OSError as e:
+            logger.warning("Failed to save pending email replies: %s", e)
 
     def _set_adapter_auto_tts_disabled(self, adapter, chat_id: str, disabled: bool) -> None:
         """Update an adapter's in-memory auto-TTS suppression set if present."""
@@ -4912,6 +4936,7 @@ class GatewayRunner:
             "source_platform": event.source.platform.value if event.source.platform else "",
         }
         self._pending_email_replies[draft_id] = draft
+        self._save_pending_email_replies()
 
         if not target:
             logger.warning(
@@ -5012,6 +5037,7 @@ class GatewayRunner:
             return f"❌ Failed to send approved email draft `{draft_id}`: {error}"
 
         self._pending_email_replies.pop(draft_id, None)
+        self._save_pending_email_replies()
         subject = draft.get("subject") or "(no subject)"
         return (
             f"✅ Email draft `{draft_id}` sent.\n"
@@ -5032,6 +5058,7 @@ class GatewayRunner:
         if not draft:
             return f"No pending email draft found for ID `{draft_id}`."
 
+        self._save_pending_email_replies()
         return f"🗑️ Email draft `{draft_id}` discarded."
     
     @staticmethod

@@ -1,7 +1,9 @@
 """Tests for human-approved outbound email replies."""
 
+import json
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -67,7 +69,7 @@ class _EmailAdapter:
         return SendResult(success=True, message_id="doc-1")
 
 
-def _make_runner():
+def _make_runner(tmp_path: Path):
     from gateway.run import GatewayRunner
 
     runner = object.__new__(GatewayRunner)
@@ -81,6 +83,7 @@ def _make_runner():
         Platform.EMAIL: _EmailAdapter(),
         Platform.TELEGRAM: _NotifyAdapter(),
     }
+    runner._PENDING_EMAIL_REPLIES_PATH = tmp_path / "pending_email_replies.json"
     runner._pending_email_replies = {}
     return runner
 
@@ -114,8 +117,8 @@ def _telegram_command(text: str) -> MessageEvent:
 
 
 @pytest.mark.asyncio
-async def test_queue_email_reply_for_approval_notifies_telegram_allowlist(monkeypatch):
-    runner = _make_runner()
+async def test_queue_email_reply_for_approval_notifies_telegram_allowlist(monkeypatch, tmp_path):
+    runner = _make_runner(tmp_path)
     monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "7809026038")
 
     queued = await runner._queue_email_reply_for_approval(
@@ -132,17 +135,20 @@ async def test_queue_email_reply_for_approval_notifies_telegram_allowlist(monkey
     assert sent["chat_id"] == "7809026038"
     assert "Pending email reply approval" in sent["content"]
     assert "/mailapprove" in sent["content"]
+    saved = json.loads(runner._PENDING_EMAIL_REPLIES_PATH.read_text())
+    assert len(saved) == 1
 
 
 @pytest.mark.asyncio
-async def test_mailapprove_sends_pending_email_and_clears_draft():
-    runner = _make_runner()
+async def test_mailapprove_sends_pending_email_and_clears_draft(tmp_path):
+    runner = _make_runner(tmp_path)
     runner._pending_email_replies["abc123"] = {
         "chat_id": "sender@example.com",
         "content": "Approved body",
         "reply_to_message_id": "<orig@example.com>",
         "subject": "Question",
     }
+    runner._save_pending_email_replies()
 
     response = await runner._handle_mailapprove_command(_telegram_command("/mailapprove abc123"))
 
@@ -155,20 +161,55 @@ async def test_mailapprove_sends_pending_email_and_clears_draft():
         }
     ]
     assert "abc123" not in runner._pending_email_replies
+    assert json.loads(runner._PENDING_EMAIL_REPLIES_PATH.read_text()) == {}
     assert "Email draft `abc123` sent" in response
 
 
 @pytest.mark.asyncio
-async def test_maildeny_discards_pending_email():
-    runner = _make_runner()
+async def test_maildeny_discards_pending_email(tmp_path):
+    runner = _make_runner(tmp_path)
     runner._pending_email_replies["abc123"] = {
         "chat_id": "sender@example.com",
         "content": "Approved body",
         "reply_to_message_id": "<orig@example.com>",
         "subject": "Question",
     }
+    runner._save_pending_email_replies()
 
     response = await runner._handle_maildeny_command(_telegram_command("/maildeny abc123"))
 
     assert "abc123" not in runner._pending_email_replies
+    assert json.loads(runner._PENDING_EMAIL_REPLIES_PATH.read_text()) == {}
     assert "discarded" in response
+
+
+def test_load_pending_email_replies_restores_saved_drafts(tmp_path):
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    runner._PENDING_EMAIL_REPLIES_PATH = tmp_path / "pending_email_replies.json"
+    runner._PENDING_EMAIL_REPLIES_PATH.write_text(json.dumps({
+        "abc123": {
+            "chat_id": "sender@example.com",
+            "content": "Draft body",
+        }
+    }))
+
+    restored = runner._load_pending_email_replies()
+
+    assert restored == {
+        "abc123": {
+            "chat_id": "sender@example.com",
+            "content": "Draft body",
+        }
+    }
+
+
+def test_load_pending_email_replies_ignores_corrupt_file(tmp_path):
+    from gateway.run import GatewayRunner
+
+    runner = object.__new__(GatewayRunner)
+    runner._PENDING_EMAIL_REPLIES_PATH = tmp_path / "pending_email_replies.json"
+    runner._PENDING_EMAIL_REPLIES_PATH.write_text("{not-json")
+
+    assert runner._load_pending_email_replies() == {}
