@@ -917,6 +917,17 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             "imap_host": email_imap,
             "smtp_host": email_smtp,
         })
+        email_require_reply_approval = os.getenv("EMAIL_REQUIRE_REPLY_APPROVAL", "").strip()
+        if email_require_reply_approval:
+            config.platforms[Platform.EMAIL].extra["require_reply_approval"] = _coerce_bool(
+                email_require_reply_approval, False
+            )
+        email_approval_platform = os.getenv("EMAIL_APPROVAL_PLATFORM", "").strip().lower()
+        if email_approval_platform:
+            config.platforms[Platform.EMAIL].extra["approval_platform"] = email_approval_platform
+        email_approval_chat_id = os.getenv("EMAIL_APPROVAL_CHAT_ID", "").strip()
+        if email_approval_chat_id:
+            config.platforms[Platform.EMAIL].extra["approval_chat_id"] = email_approval_chat_id
     email_home = os.getenv("EMAIL_HOME_ADDRESS")
     if email_home and Platform.EMAIL in config.platforms:
         config.platforms[Platform.EMAIL].home_channel = HomeChannel(

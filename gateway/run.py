@@ -24,6 +24,7 @@ import signal
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional, Any, List
@@ -589,6 +590,9 @@ class GatewayRunner:
         # Track pending exec approvals per session
         # Key: session_key, Value: {"command": str, "pattern_key": str, ...}
         self._pending_approvals: Dict[str, Dict[str, Any]] = {}
+        # Track pending email reply drafts awaiting human approval.
+        # Key: draft_id, Value: metadata needed to send or discard the draft.
+        self._pending_email_replies: Dict[str, Dict[str, Any]] = {}
 
         # Track platforms that failed to connect for background reconnection.
         # Key: Platform enum, Value: {"config": platform_config, "attempts": int, "next_retry": float}
@@ -2761,6 +2765,12 @@ class GatewayRunner:
         if canonical == "deny":
             return await self._handle_deny_command(event)
 
+        if canonical == "mailapprove":
+            return await self._handle_mailapprove_command(event)
+
+        if canonical == "maildeny":
+            return await self._handle_maildeny_command(event)
+
         if canonical == "update":
             return await self._handle_update_command(event)
 
@@ -3773,6 +3783,12 @@ class GatewayRunner:
                 session_entry.session_key,
                 last_prompt_tokens=agent_result.get("last_prompt_tokens", 0),
             )
+
+            # Optional human approval gate for outbound email replies.
+            # When enabled, the agent still drafts the response, but the reply
+            # is held until the operator approves it from a control channel.
+            if await self._queue_email_reply_for_approval(event, response):
+                return None
 
             # Auto voice reply: send TTS audio before the text response
             _already_sent = bool(agent_result.get("already_sent"))
@@ -4807,6 +4823,216 @@ class GatewayRunner:
             f"✅ Home channel set to **{chat_name}** (ID: {chat_id}).\n"
             f"Cron jobs and cross-platform messages will be delivered here."
         )
+
+    def _email_reply_approval_enabled(self, source: SessionSource) -> bool:
+        """Return True when inbound email replies should be held for approval."""
+        if not source or source.platform != Platform.EMAIL:
+            return False
+        email_cfg = self.config.platforms.get(Platform.EMAIL)
+        if not email_cfg:
+            return False
+        return is_truthy_value((email_cfg.extra or {}).get("require_reply_approval"), default=False)
+
+    def _resolve_email_approval_target(self) -> Optional[tuple[Platform, str]]:
+        """Pick the control channel that should receive pending email drafts."""
+        email_cfg = self.config.platforms.get(Platform.EMAIL)
+        extra = (email_cfg.extra if email_cfg else {}) or {}
+
+        explicit_platform = str(extra.get("approval_platform", "") or "").strip().lower()
+        explicit_chat_id = str(extra.get("approval_chat_id", "") or "").strip()
+        if explicit_platform and explicit_chat_id:
+            try:
+                platform = Platform(explicit_platform)
+            except ValueError:
+                logger.warning("Invalid EMAIL_APPROVAL_PLATFORM=%s", explicit_platform)
+            else:
+                if self.adapters.get(platform):
+                    return platform, explicit_chat_id
+
+        telegram_home = self.config.get_home_channel(Platform.TELEGRAM)
+        if telegram_home and telegram_home.chat_id and self.adapters.get(Platform.TELEGRAM):
+            return Platform.TELEGRAM, str(telegram_home.chat_id)
+
+        telegram_allowed = os.getenv("TELEGRAM_ALLOWED_USERS", "").strip()
+        if telegram_allowed and self.adapters.get(Platform.TELEGRAM):
+            first_id = next((item.strip() for item in telegram_allowed.split(",") if item.strip()), "")
+            if first_id:
+                return Platform.TELEGRAM, first_id
+
+        for platform, cfg in self.config.platforms.items():
+            if platform == Platform.EMAIL or not self.adapters.get(platform):
+                continue
+            if cfg.home_channel and cfg.home_channel.chat_id:
+                return platform, str(cfg.home_channel.chat_id)
+
+        return None
+
+    @staticmethod
+    def _format_email_reply_draft_notification(draft_id: str, draft: Dict[str, Any]) -> str:
+        """Build a concise approval prompt for a pending email draft."""
+        subject = draft.get("subject") or "(no subject)"
+        sender = draft.get("chat_id") or "(unknown sender)"
+        body = (draft.get("content") or "").strip()
+        preview = body if len(body) <= 3000 else body[:3000] + "\n\n...[truncated]"
+        return (
+            "✉️ Pending email reply approval\n"
+            f"Draft ID: {draft_id}\n"
+            f"To: {sender}\n"
+            f"Subject: Re: {subject}\n\n"
+            "Draft:\n"
+            f"{preview}\n\n"
+            f"Approve: /mailapprove {draft_id}\n"
+            f"Deny: /maildeny {draft_id}"
+        )
+
+    async def _queue_email_reply_for_approval(
+        self,
+        event: MessageEvent,
+        response: str,
+    ) -> bool:
+        """Hold an email reply as a draft and notify the control channel.
+
+        Returns True when the response was converted into a pending draft and
+        therefore must NOT be auto-sent to the original email sender.
+        """
+        if not response or not self._email_reply_approval_enabled(event.source):
+            return False
+
+        target = self._resolve_email_approval_target()
+        draft_id = uuid.uuid4().hex[:8]
+
+        email_adapter = self.adapters.get(Platform.EMAIL)
+        thread_ctx = getattr(email_adapter, "_thread_context", {}).get(event.source.chat_id, {}) if email_adapter else {}
+        draft = {
+            "chat_id": event.source.chat_id,
+            "content": response,
+            "reply_to_message_id": event.message_id,
+            "subject": thread_ctx.get("subject", ""),
+            "requested_at": time.time(),
+            "source_platform": event.source.platform.value if event.source.platform else "",
+        }
+        self._pending_email_replies[draft_id] = draft
+
+        if not target:
+            logger.warning(
+                "Email reply approval is enabled but no control channel is configured; "
+                "draft %s for %s is pending without notification.",
+                draft_id,
+                event.source.chat_id,
+            )
+            return True
+
+        target_platform, target_chat_id = target
+        notify_adapter = self.adapters.get(target_platform)
+        if not notify_adapter:
+            logger.warning(
+                "Email reply approval target %s is unavailable; draft %s for %s is pending.",
+                target_platform.value,
+                draft_id,
+                event.source.chat_id,
+            )
+            return True
+
+        try:
+            await notify_adapter.send(
+                chat_id=target_chat_id,
+                content=self._format_email_reply_draft_notification(draft_id, draft),
+            )
+        except Exception as e:
+            logger.error("Failed to notify email approval target for draft %s: %s", draft_id, e)
+
+        return True
+
+    async def _send_approved_email_reply(self, draft: Dict[str, Any]) -> tuple[bool, str]:
+        """Send a previously approved email draft through the email adapter."""
+        adapter = self.adapters.get(Platform.EMAIL)
+        if not adapter:
+            return False, "Email adapter is not connected."
+
+        chat_id = str(draft.get("chat_id") or "").strip()
+        if not chat_id:
+            return False, "Draft is missing the recipient address."
+
+        reply_to = draft.get("reply_to_message_id") or None
+        response = draft.get("content") or ""
+
+        media_files, response = adapter.extract_media(response)
+        images, text_content = adapter.extract_images(response)
+        text_content = text_content.replace("[[audio_as_voice]]", "").strip()
+        text_content = re.sub(r"MEDIA:\s*\S+", "", text_content).strip()
+        local_files, text_content = adapter.extract_local_files(text_content)
+
+        if text_content:
+            result = await adapter._send_with_retry(
+                chat_id=chat_id,
+                content=text_content,
+                reply_to=reply_to,
+            )
+            if not result.success:
+                return False, result.error or "Failed to send email reply text."
+
+        for image_url, alt_text in images:
+            result = await adapter.send_image(
+                chat_id=chat_id,
+                image_url=image_url,
+                caption=alt_text or None,
+                reply_to=reply_to,
+            )
+            if not result.success:
+                return False, result.error or f"Failed to send image {image_url}."
+
+        attachment_paths = [path for path, _is_voice in media_files]
+        attachment_paths.extend(local_files)
+        for file_path in attachment_paths:
+            result = await adapter.send_document(
+                chat_id=chat_id,
+                file_path=file_path,
+                reply_to=reply_to,
+            )
+            if not result.success:
+                return False, result.error or f"Failed to send attachment {file_path}."
+
+        return True, ""
+
+    async def _handle_mailapprove_command(self, event: MessageEvent) -> str:
+        """Approve and send a pending email draft."""
+        draft_id = event.get_command_args().strip()
+        if not draft_id:
+            pending = ", ".join(sorted(self._pending_email_replies.keys())[:10])
+            if pending:
+                return f"Pending email drafts: {pending}\nUse /mailapprove <draft_id>."
+            return "No pending email drafts."
+
+        draft = self._pending_email_replies.get(draft_id)
+        if not draft:
+            return f"No pending email draft found for ID `{draft_id}`."
+
+        ok, error = await self._send_approved_email_reply(draft)
+        if not ok:
+            return f"❌ Failed to send approved email draft `{draft_id}`: {error}"
+
+        self._pending_email_replies.pop(draft_id, None)
+        subject = draft.get("subject") or "(no subject)"
+        return (
+            f"✅ Email draft `{draft_id}` sent.\n"
+            f"To: {draft.get('chat_id')}\n"
+            f"Subject: Re: {subject}"
+        )
+
+    async def _handle_maildeny_command(self, event: MessageEvent) -> str:
+        """Discard a pending email draft."""
+        draft_id = event.get_command_args().strip()
+        if not draft_id:
+            pending = ", ".join(sorted(self._pending_email_replies.keys())[:10])
+            if pending:
+                return f"Pending email drafts: {pending}\nUse /maildeny <draft_id>."
+            return "No pending email drafts."
+
+        draft = self._pending_email_replies.pop(draft_id, None)
+        if not draft:
+            return f"No pending email draft found for ID `{draft_id}`."
+
+        return f"🗑️ Email draft `{draft_id}` discarded."
     
     @staticmethod
     def _get_guild_id(event: MessageEvent) -> Optional[int]:

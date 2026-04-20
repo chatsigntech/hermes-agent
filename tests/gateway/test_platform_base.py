@@ -280,6 +280,22 @@ class TestExtractMedia:
         media, _ = BasePlatformAdapter.extract_media(content)
         assert len(media) == 2
 
+    def test_document_media_tag_extracted(self):
+        content = "Here is your deck:\nMEDIA:/tmp/presentation.pptx"
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+        assert media == [("/tmp/presentation.pptx", False)]
+        assert "MEDIA:" not in cleaned
+        assert "Here is your deck" in cleaned
+
+    def test_relative_document_media_tag_resolves_to_outputs(self, monkeypatch, tmp_path):
+        deck = tmp_path / "presentation.pptx"
+        deck.write_bytes(b"pptx")
+        monkeypatch.setattr("gateway.platforms.base.OUTPUTS_DIR", tmp_path)
+        content = "Send this:\nMEDIA:./presentation.pptx"
+        media, cleaned = BasePlatformAdapter.extract_media(content)
+        assert media == [(str(deck), False)]
+        assert "MEDIA:" not in cleaned
+
     def test_voice_directive_removed_from_content(self):
         content = "[[audio_as_voice]]\nSome text\nMEDIA:/voice.ogg"
         _, cleaned = BasePlatformAdapter.extract_media(content)
@@ -581,4 +597,3 @@ class TestTruncateMessageUtf16:
             assert fence_count % 2 == 0, (
                 f"Chunk {i} has unbalanced fences ({fence_count})"
             )
-

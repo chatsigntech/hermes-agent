@@ -74,6 +74,13 @@ class TestBasicDetection:
             assert len(paths) == 1, f"Failed for {ext}"
             assert paths[0] == f"/tmp/pic{ext}"
 
+    def test_document_extensions(self):
+        for ext in (".pdf", ".docx", ".xlsx", ".pptx", ".zip"):
+            text = f"Deliverable at /tmp/report{ext} here"
+            paths, _ = _extract(text)
+            assert len(paths) == 1, f"Failed for {ext}"
+            assert paths[0] == f"/tmp/report{ext}"
+
     def test_case_insensitive_extension(self):
         paths, _ = _extract("See /tmp/PHOTO.PNG and /tmp/vid.MP4 now")
         assert len(paths) == 2
@@ -269,8 +276,8 @@ class TestEdgeCases:
         assert cleaned == ""
 
     def test_no_media_extensions(self):
-        """Non-media extensions should not be matched."""
-        paths, _ = _extract("See /tmp/data.csv and /tmp/script.py and /tmp/notes.txt")
+        """Unsupported extensions should not be matched."""
+        paths, _ = _extract("See /tmp/data.csv and /tmp/script.py and /tmp/notes.json")
         assert paths == []
 
     def test_path_with_spaces_not_matched(self):

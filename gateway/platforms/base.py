@@ -559,6 +559,7 @@ async def cache_audio_from_url(url: str, ext: str = ".ogg", retries: int = 2) ->
 # ---------------------------------------------------------------------------
 
 DOCUMENT_CACHE_DIR = get_hermes_dir("cache/documents", "document_cache")
+OUTPUTS_DIR = get_hermes_dir("outputs", "outputs")
 
 SUPPORTED_DOCUMENT_TYPES = {
     ".pdf": "application/pdf",
@@ -570,6 +571,60 @@ SUPPORTED_DOCUMENT_TYPES = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
+
+OUTBOUND_MEDIA_TYPES = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".mp4", ".mov", ".avi", ".mkv", ".webm",
+    ".ogg", ".opus", ".mp3", ".wav", ".m4a",
+)
+
+# Keep auto-delivery conservative for non-media files so routine filesystem
+# references do not unexpectedly turn into attachments.
+OUTBOUND_DOCUMENT_ATTACHMENT_TYPES = (
+    ".pdf", ".docx", ".xlsx", ".pptx", ".zip",
+)
+
+OUTBOUND_ATTACHMENT_TYPES = OUTBOUND_MEDIA_TYPES + OUTBOUND_DOCUMENT_ATTACHMENT_TYPES
+
+
+def _resolve_outbound_attachment_path(path: str) -> str:
+    """Best-effort resolution for outbound attachment paths.
+
+    Models usually follow the documented ``MEDIA:/absolute/path`` format, but
+    in practice they sometimes emit ``MEDIA:./file.ext`` or mention a basename
+    that actually lives under ``~/.hermes/outputs``.  Resolve these common
+    cases when the file already exists so the attachment can still be delivered.
+    """
+    raw = (path or "").strip()
+    if not raw:
+        return raw
+
+    expanded = os.path.expanduser(raw)
+    candidate_paths: list[Path] = []
+    p = Path(expanded)
+
+    if p.is_absolute():
+        candidate_paths.append(p)
+    else:
+        candidate_paths.extend([
+            Path.cwd() / p,
+            OUTPUTS_DIR / p,
+            OUTPUTS_DIR / p.name,
+            DOCUMENT_CACHE_DIR / p.name,
+            IMAGE_CACHE_DIR / p.name,
+            AUDIO_CACHE_DIR / p.name,
+        ])
+
+    seen: set[str] = set()
+    for candidate in candidate_paths:
+        candidate_str = str(candidate)
+        if candidate_str in seen:
+            continue
+        seen.add(candidate_str)
+        if os.path.isfile(candidate_str):
+            return candidate_str
+
+    return expanded
 
 
 def get_document_cache_dir() -> Path:
@@ -1212,8 +1267,10 @@ class BasePlatformAdapter(ABC):
         
         # Extract MEDIA:<path> tags, allowing optional whitespace after the colon
         # and quoted/backticked paths for LLM-formatted outputs.
+        ext_part = "|".join(ext.lstrip(".") for ext in OUTBOUND_ATTACHMENT_TYPES)
         media_pattern = re.compile(
-            r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:png|jpe?g|gif|webp|mp4|mov|avi|mkv|webm|ogg|opus|mp3|wav|m4a)(?=[\s`"',;:)\]}]|$)|\S+)[`"']?'''
+            r'''[`"']?MEDIA:\s*(?P<path>`[^`\n]+`|"[^"\n]+"|'[^'\n]+'|(?:~/|/)\S+(?:[^\S\n]+\S+)*?\.(?:''' + ext_part + r''')(?=[\s`"',;:)\]}]|$)|\S+)[`"']?''',
+            re.IGNORECASE,
         )
         for match in media_pattern.finditer(content):
             path = match.group("path").strip()
@@ -1221,7 +1278,7 @@ class BasePlatformAdapter(ABC):
                 path = path[1:-1].strip()
             path = path.lstrip("`\"'").rstrip("`\"',.;:)}]")
             if path:
-                media.append((path, has_voice_tag))
+                media.append((_resolve_outbound_attachment_path(path), has_voice_tag))
 
         # Remove MEDIA tags from content (including surrounding quote/backtick wrappers)
         if media:
@@ -1233,10 +1290,10 @@ class BasePlatformAdapter(ABC):
     @staticmethod
     def extract_local_files(content: str) -> Tuple[List[str], str]:
         """
-        Detect bare local file paths in response text for native media delivery.
+        Detect bare local file paths in response text for native attachment delivery.
 
         Matches absolute paths (/...) and tilde paths (~/) ending in common
-        image or video extensions.  Validates each candidate with
+        outbound attachment extensions. Validates each candidate with
         ``os.path.isfile()`` to avoid false positives from URLs or
         non-existent paths.
 
@@ -1247,11 +1304,7 @@ class BasePlatformAdapter(ABC):
             Tuple of (list of expanded file paths, cleaned text with the
             raw path strings removed).
         """
-        _LOCAL_MEDIA_EXTS = (
-            '.png', '.jpg', '.jpeg', '.gif', '.webp',
-            '.mp4', '.mov', '.avi', '.mkv', '.webm',
-        )
-        ext_part = '|'.join(e.lstrip('.') for e in _LOCAL_MEDIA_EXTS)
+        ext_part = '|'.join(e.lstrip('.') for e in OUTBOUND_ATTACHMENT_TYPES)
 
         # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/img.png)
         #             and relative paths (./foo.png)
@@ -1276,7 +1329,7 @@ class BasePlatformAdapter(ABC):
             if _in_code(match.start()):
                 continue
             raw = match.group(0)
-            expanded = os.path.expanduser(raw)
+            expanded = _resolve_outbound_attachment_path(raw)
             if os.path.isfile(expanded):
                 found.append((raw, expanded))
 
@@ -1509,7 +1562,7 @@ class BasePlatformAdapter(ABC):
             # session lifecycle and its cleanup races with the running task
             # (see PR #4926).
             cmd = event.get_command()
-            if cmd in ("approve", "deny", "status", "stop", "new", "reset", "background", "restart"):
+            if cmd in ("approve", "deny", "mailapprove", "maildeny", "status", "stop", "new", "reset", "background", "restart"):
                 logger.debug(
                     "[%s] Command '/%s' bypassing active-session guard for %s",
                     self.name, cmd, session_key,
