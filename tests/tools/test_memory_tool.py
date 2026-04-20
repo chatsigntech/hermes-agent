@@ -26,6 +26,11 @@ class TestMemorySchema:
         assert "temporary task state" in description
         assert ">80%" not in description
 
+    def test_discourages_unresolved_troubleshooting_notes(self):
+        description = MEMORY_SCHEMA["description"]
+        assert "unresolved troubleshooting notes" in description
+        assert "need to check/install/verify" in description
+
 
 # =========================================================================
 # Security scanning
@@ -83,6 +88,16 @@ class TestScanMemoryContent:
         result = _scan_memory_content("system prompt override")
         assert "Blocked" in result
         assert "sys_prompt_override" in result
+
+    def test_unresolved_followup_note_blocked(self):
+        result = _scan_memory_content("Himalaya may be missing; need to check PATH and install if needed")
+        assert "Blocked" in result
+        assert "temporary_followup" in result
+
+    def test_chinese_temporary_note_blocked(self):
+        result = _scan_memory_content("用户已安装Himalaya，但系统无法识别。需要检查安装路径和环境变量。")
+        assert "Blocked" in result
+        assert "temporary_followup" in result
 
 
 # =========================================================================

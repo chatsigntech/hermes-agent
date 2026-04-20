@@ -774,7 +774,9 @@ class GatewayRunner:
                 "(user profile or your notes) that would be useful in future sessions.\n"
                 "2. If you discovered a reusable workflow or solved a non-trivial "
                 "problem, consider saving it as a skill.\n"
-                "3. If nothing is worth saving, that's fine — just skip.\n\n"
+                "3. Only save resolved, durable facts — not tentative troubleshooting "
+                "notes, TODOs, or reminders to check/install/verify something later.\n"
+                "4. If nothing is worth saving, that's fine — just skip.\n\n"
             )
 
             if _current_memory:

@@ -6614,7 +6614,9 @@ class AIAgent:
         flush_content = (
             "[System: The session is being compressed. "
             "Save anything worth remembering — prioritize user preferences, "
-            "corrections, and recurring patterns over task-specific details.]"
+            "corrections, and recurring patterns over task-specific details. "
+            "Only save resolved, durable facts — not tentative troubleshooting "
+            "notes, TODOs, or reminders to check/install/verify something later.]"
         )
         _sentinel = f"__flush_{id(self)}_{time.monotonic()}"
         flush_msg = {"role": "user", "content": flush_content, "_flush_sentinel": _sentinel}

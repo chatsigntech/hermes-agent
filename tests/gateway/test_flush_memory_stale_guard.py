@@ -221,4 +221,5 @@ class TestFlushPromptStructure:
         assert "automatically reset" in flush_prompt
         assert "Save any important facts" in flush_prompt
         assert "consider saving it as a skill" in flush_prompt
+        assert "Only save resolved, durable facts" in flush_prompt
         assert "Do NOT respond to the user" in flush_prompt

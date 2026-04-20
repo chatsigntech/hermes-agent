@@ -70,6 +70,15 @@ _MEMORY_THREAT_PATTERNS = [
     (r'\$HOME/\.hermes/\.env|\~/\.hermes/\.env', "hermes_env"),
 ]
 
+# Notes that belong in task state or follow-up planning, not persistent memory.
+_MEMORY_EPHEMERAL_PATTERNS = [
+    (r'\bneed(?:s|ed)?\s+to\s+(?:check|verify|confirm|investigate|debug|retest|follow\s*up|look\s+into|install|configure)\b', "temporary_followup"),
+    (r'\b(?:requires?|pending)\s+(?:verification|confirmation|investigation|follow[- ]?up|retesting)\b', "temporary_followup"),
+    (r'\b(?:todo|to-do|follow[- ]?up)\b', "task_state"),
+    (r'需要(?:检查|确认|验证|排查|跟进|调查|安装|配置)', "temporary_followup"),
+    (r'待(?:确认|验证|排查|跟进)', "task_state"),
+]
+
 # Subset of invisible chars for injection detection
 _INVISIBLE_CHARS = {
     '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff',
@@ -78,7 +87,13 @@ _INVISIBLE_CHARS = {
 
 
 def _scan_memory_content(content: str) -> Optional[str]:
-    """Scan memory content for injection/exfil patterns. Returns error string if blocked."""
+    """Scan memory content for unsafe or non-durable entries.
+
+    Memory is injected into future system prompts, so we block both:
+    - security threats (prompt injection / exfiltration)
+    - unresolved troubleshooting or TODO-style notes that should live in
+      session history instead of persistent memory
+    """
     # Check invisible unicode
     for char in _INVISIBLE_CHARS:
         if char in content:
@@ -88,6 +103,14 @@ def _scan_memory_content(content: str) -> Optional[str]:
     for pattern, pid in _MEMORY_THREAT_PATTERNS:
         if re.search(pattern, content, re.IGNORECASE):
             return f"Blocked: content matches threat pattern '{pid}'. Memory entries are injected into the system prompt and must not contain injection or exfiltration payloads."
+
+    for pattern, pid in _MEMORY_EPHEMERAL_PATTERNS:
+        if re.search(pattern, content, re.IGNORECASE):
+            return (
+                f"Blocked: content matches non-durable pattern '{pid}'. "
+                "Persistent memory is for resolved, stable facts — not TODOs, "
+                "tentative troubleshooting notes, or follow-up reminders."
+            )
 
     return None
 
@@ -497,6 +520,8 @@ MEMORY_SCHEMA = {
         "The most valuable memory prevents the user from having to repeat themselves.\n\n"
         "Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO "
         "state to memory; use session_search to recall those from past transcripts.\n"
+        "Do NOT save tentative hypotheses, unresolved troubleshooting notes, or reminders like "
+        "'need to check/install/verify' — only save resolved, durable facts.\n"
         "If you've discovered a new way to do something, solved a problem that could be "
         "necessary later, save it as a skill with the skill tool.\n\n"
         "TWO TARGETS:\n"
@@ -549,7 +574,6 @@ registry.register(
     check_fn=check_memory_requirements,
     emoji="🧠",
 )
-
 
 
 

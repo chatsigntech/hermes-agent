@@ -51,6 +51,8 @@ def _make_agent(monkeypatch, api_mode="chat_completions", provider="openrouter")
     ])
     monkeypatch.setattr(run_agent, "check_toolset_requirements", lambda: {})
     monkeypatch.setattr(run_agent, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr("hermes_logging.setup_logging", lambda **kwargs: None)
+    monkeypatch.setattr("hermes_logging.setup_verbose_logging", lambda **kwargs: None)
 
     agent = run_agent.AIAgent(
         api_key="test-key",
@@ -227,6 +229,25 @@ class TestFlushMemoriesUsesAuxiliaryClient:
         # No flush sentinel should remain
         for msg in messages:
             assert "_flush_sentinel" not in msg
+
+    def test_flush_prompt_discourages_temporary_notes(self, monkeypatch):
+        """Flush prompt should explicitly discourage unresolved troubleshooting notes."""
+        agent = _make_agent(monkeypatch, api_mode="chat_completions", provider="openrouter")
+
+        mock_response = _chat_response_with_memory_call()
+
+        with patch("agent.auxiliary_client.call_llm", return_value=mock_response) as mock_call:
+            messages = [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+                {"role": "user", "content": "Remember X"},
+            ]
+            with patch("tools.memory_tool.memory_tool", return_value="Saved."):
+                agent.flush_memories(messages)
+
+        call_messages = mock_call.call_args.kwargs["messages"]
+        assert call_messages[-1]["role"] == "user"
+        assert "Only save resolved, durable facts" in call_messages[-1]["content"]
 
 
 class TestFlushMemoriesCodexFallback:
