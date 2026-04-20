@@ -138,11 +138,15 @@ When enabled, attachment and inline parts are skipped before payload decoding. T
 Email access follows the same pattern as all other Hermes platforms:
 
 1. **`EMAIL_ALLOWED_USERS` set** → only emails from those addresses are processed
-2. **No allowlist set** → unknown senders get a pairing code
+2. **Unknown senders by default** → silently ignored (safer for email)
 3. **`EMAIL_ALLOW_ALL_USERS=true`** → any sender is accepted (use with caution)
 
 :::warning
 **Always configure `EMAIL_ALLOWED_USERS`.** Without it, anyone who knows the agent's email address could send commands. The agent has terminal access by default.
+:::
+
+:::tip
+Email intentionally does **not** use visible DM pairing replies for unknown senders. Hermes stays silent instead, which avoids leaking that the address is active or generating accidental outbound mail to strangers.
 :::
 
 ---

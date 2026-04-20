@@ -159,6 +159,46 @@ class TestMissingModelSection:
         assert not any("no 'model' section" in i.message for i in issues)
 
 
+class TestEmailSafetyValidation:
+    def test_email_pair_override_warns(self):
+        issues = validate_config_structure({
+            "platforms": {
+                "email": {
+                    "extra": {
+                        "unauthorized_dm_behavior": "pair",
+                    }
+                }
+            }
+        })
+
+        assert any(
+            "never sends pairing replies" in i.message for i in issues
+        )
+
+    def test_email_enabled_without_allowlist_warns(self):
+        issues = validate_config_structure(
+            {"platforms": {"email": {"extra": {}}}},
+            env_vars={"EMAIL_ADDRESS": "hermes@example.com"},
+        )
+
+        assert any(
+            "EMAIL_ALLOWED_USERS is empty" in i.message for i in issues
+        )
+
+    def test_email_allow_all_warns(self):
+        issues = validate_config_structure(
+            {"platforms": {"email": {"extra": {}}}},
+            env_vars={
+                "EMAIL_ADDRESS": "hermes@example.com",
+                "EMAIL_ALLOW_ALL_USERS": "true",
+            },
+        )
+
+        assert any(
+            "EMAIL_ALLOW_ALL_USERS=true" in i.message for i in issues
+        )
+
+
 class TestConfigIssueDataclass:
     """ConfigIssue should be a proper dataclass."""
 

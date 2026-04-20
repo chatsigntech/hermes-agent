@@ -233,6 +233,7 @@ whatsapp:
 - `pair` is the default. Unauthorized DMs get a pairing code reply.
 - `ignore` silently drops unauthorized DMs.
 - Platform sections override the global default, so you can keep pairing on Telegram while keeping WhatsApp silent.
+- **Email is an exception:** unknown email senders are always silently ignored. Hermes never sends pairing codes by email.
 
 **Security features** (based on OWASP + NIST SP 800-63-4 guidance):
 

@@ -418,6 +418,10 @@ class GatewayConfig:
 
     def get_unauthorized_dm_behavior(self, platform: Optional[Platform] = None) -> str:
         """Return the effective unauthorized-DM behavior for a platform."""
+        if platform == Platform.EMAIL:
+            # Email is intentionally stricter than chat platforms: unknown
+            # senders should never receive visible replies from the gateway.
+            return "ignore"
         if platform:
             platform_cfg = self.platforms.get(platform)
             if platform_cfg and "unauthorized_dm_behavior" in platform_cfg.extra:

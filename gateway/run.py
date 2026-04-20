@@ -2399,6 +2399,11 @@ class GatewayRunner:
             return None
         elif not self._is_user_authorized(source):
             logger.warning("Unauthorized user: %s (%s) on %s", source.user_id, source.user_name, source.platform.value)
+            # Email is intentionally silent for unknown senders. Even if a
+            # config file still contains an old pairing override, never emit a
+            # visible response to an unauthorized email address.
+            if source.platform == Platform.EMAIL:
+                return None
             # In DMs: offer pairing code. In groups: silently ignore.
             if source.chat_type == "dm" and self._get_unauthorized_dm_behavior(source.platform) == "pair":
                 platform_name = source.platform.value if source.platform else "unknown"

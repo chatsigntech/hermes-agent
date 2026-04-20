@@ -223,6 +223,19 @@ class TestLoadGatewayConfig:
         assert config.unauthorized_dm_behavior == "ignore"
         assert config.platforms[Platform.WHATSAPP].extra["unauthorized_dm_behavior"] == "pair"
 
+    def test_email_defaults_to_ignore_for_unauthorized_dm_behavior(self):
+        config = GatewayConfig(
+            unauthorized_dm_behavior="pair",
+            platforms={
+                Platform.EMAIL: PlatformConfig(
+                    enabled=True,
+                    extra={"address": "hermes@test.com"},
+                ),
+            },
+        )
+
+        assert config.get_unauthorized_dm_behavior(Platform.EMAIL) == "ignore"
+
 
 class TestHomeChannelEnvOverrides:
     """Home channel env vars should apply even when the platform was already

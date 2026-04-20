@@ -208,6 +208,10 @@ hermes pairing revoke telegram 123456789  # Remove access
 
 Pairing codes expire after 1 hour, are rate-limited, and use cryptographic randomness.
 
+:::note
+Email does not use visible DM pairing replies. Unknown email senders are silently ignored unless you explicitly allow them.
+:::
+
 ## Interrupting the Agent
 
 Send any message while the agent is working to interrupt it. Key behaviors:

@@ -1726,7 +1726,10 @@ class ConfigIssue:
     hint: str
 
 
-def validate_config_structure(config: Optional[Dict[str, Any]] = None) -> List["ConfigIssue"]:
+def validate_config_structure(
+    config: Optional[Dict[str, Any]] = None,
+    env_vars: Optional[Dict[str, str]] = None,
+) -> List["ConfigIssue"]:
     """Validate config.yaml structure and return a list of detected issues.
 
     Catches common YAML formatting mistakes that produce confusing runtime
@@ -1734,6 +1737,7 @@ def validate_config_structure(config: Optional[Dict[str, Any]] = None) -> List["
 
     Can be called with a pre-loaded config dict, or will load from disk.
     """
+    loaded_from_disk = config is None
     if config is None:
         try:
             config = load_config()
@@ -1741,6 +1745,11 @@ def validate_config_structure(config: Optional[Dict[str, Any]] = None) -> List["
             return [ConfigIssue("error", "Could not load config.yaml", "Run 'hermes setup' to create a valid config")]
 
     issues: List[ConfigIssue] = []
+    if env_vars is None and loaded_from_disk:
+        try:
+            env_vars = load_env()
+        except Exception:
+            env_vars = {}
 
     # ── custom_providers must be a list, not a dict ──────────────────────
     cp = config.get("custom_providers")
@@ -1844,6 +1853,36 @@ def validate_config_structure(config: Optional[Dict[str, Any]] = None) -> List["
                 f"Root-level key '{key}' looks misplaced — should it be under 'model:' or inside a 'custom_providers' entry?",
                 f"Move '{key}' under the appropriate section",
             ))
+
+    # ── Email safety checks ──────────────────────────────────────────────
+    platforms_cfg = config.get("platforms") if isinstance(config, dict) else None
+    email_cfg = platforms_cfg.get("email") if isinstance(platforms_cfg, dict) else None
+    email_extra = email_cfg.get("extra") if isinstance(email_cfg, dict) else None
+    if isinstance(email_extra, dict):
+        if email_extra.get("unauthorized_dm_behavior") == "pair":
+            issues.append(ConfigIssue(
+                "warning",
+                "platforms.email.extra.unauthorized_dm_behavior=pair is ignored — Hermes never sends pairing replies to unknown email senders",
+                "Remove this setting. Email unauthorized senders are always silently ignored.",
+            ))
+
+    if env_vars:
+        email_enabled = bool(env_vars.get("EMAIL_ADDRESS", "").strip())
+        if email_enabled:
+            email_allow_all = env_vars.get("EMAIL_ALLOW_ALL_USERS", "").strip().lower() in {"true", "1", "yes"}
+            email_allowed_users = env_vars.get("EMAIL_ALLOWED_USERS", "").strip()
+            if email_allow_all:
+                issues.append(ConfigIssue(
+                    "warning",
+                    "EMAIL_ALLOW_ALL_USERS=true exposes the email address to any sender",
+                    "Prefer a strict EMAIL_ALLOWED_USERS allowlist for the email gateway.",
+                ))
+            elif not email_allowed_users:
+                issues.append(ConfigIssue(
+                    "warning",
+                    "Email gateway is configured but EMAIL_ALLOWED_USERS is empty",
+                    "Set EMAIL_ALLOWED_USERS=you@example.com,... so only trusted senders can interact with Hermes.",
+                ))
 
     return issues
 

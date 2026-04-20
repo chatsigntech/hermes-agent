@@ -1050,6 +1050,7 @@ whatsapp:
 - `pair` is the default. Hermes denies access, but replies with a one-time pairing code in DMs.
 - `ignore` silently drops unauthorized DMs.
 - Platform sections override the global default, so you can keep pairing enabled broadly while making one platform quieter.
+- **Email is stricter:** unknown senders are always silently ignored, even if `platforms.email.extra.unauthorized_dm_behavior` is set to `pair`.
 
 ## Quick Commands
 
