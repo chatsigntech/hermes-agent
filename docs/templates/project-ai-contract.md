@@ -381,7 +381,11 @@ For long-lived remote projects, also record whether this project is expected to:
 
 ### Current Workers
 - Claude Code: auth refresh implementation
+  - Worktree: `feat/auth-refresh`
+  - Session ID: `75e2167f-example`
 - Codex: audit helper cleanup review
+  - Worktree: `review/admin-audit`
+  - Process Session ID: `proc_abc123`
 
 ### Open Reviews
 - PR #142 waiting on test evidence
@@ -414,7 +418,11 @@ For long-lived remote projects, also record whether this project is expected to:
 - Temporary files must stay in `tmp/` or `.artifacts/`
 - Ask before changing deployment configuration
 - Default to one active coding worker at a time unless parallelism is clearly justified
-- Prefer `claude -p` for a fresh task and `claude -p --continue` only for the same task in the same directory or worktree
+- Prefer `claude -p` for a fresh task
+- Record the returned Claude `session_id` under `Current Workers`
+- Prefer `claude -p --resume <id>` when continuing a tracked Claude task
+- Use `claude -p --continue` only when the same task is continuing in the same directory or worktree and there is no session ambiguity
+- Record Codex `process session id` values under `Current Workers` when Codex is running in background mode
 - If `Execution Mode` is `remote-ssh`, prefer remote Claude/Codex first, SSH terminal second, and local CLI over SSH only as a temporary fallback
 ````
 
@@ -428,6 +436,8 @@ Use `PROJECT.md` for live control-plane information:
 - current tasks
 - active worktrees
 - worker assignments
+- worker session IDs when the worker supports resumable sessions
+- worker process session IDs when the worker is tracked through Hermes background processes
 - deployment state
 - current risks
 - active blockers

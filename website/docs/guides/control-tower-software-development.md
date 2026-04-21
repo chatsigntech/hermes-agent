@@ -493,7 +493,10 @@ The control-tower architecture can support multiple workers and parallel worktre
 - keep **one active coding worker** per project task unless parallelism is explicitly needed
 - do **not** keep Claude Code running in a persistent tmux session by default
 - prefer `claude -p` for a fresh one-shot task
-- prefer `claude -p --continue` when Hermes is continuing the same task in the same directory or worktree
+- record the returned Claude `session_id` in `PROJECT.md` under `Current Workers`
+- prefer `claude -p --resume <id>` when Hermes is continuing a tracked Claude task
+- use `claude -p --continue` only when the same task is continuing in the same directory or worktree and there is no session ambiguity
+- record Codex `process session id` values in `PROJECT.md` under `Current Workers` when Codex is running as a tracked background process
 
 This makes supervision and auditing much easier while the workflow is still being standardized.
 
@@ -778,10 +781,12 @@ Use this loop for each project:
 3. Ask Hermes to write a plan before implementation
 4. Let Hermes choose the current primary worker
 5. Run the task in the assigned repository or worktree
-6. Use `claude -p --continue` if the same task needs another pass in the same directory
-7. Create worktrees only if parallel coding is explicitly needed
-8. Have Hermes perform final validation
-9. Have Hermes summarize results, risks, and next steps
+6. Update `PROJECT.md` with the active worker and Claude `session_id` if applicable
+7. Update `PROJECT.md` with any Codex process session id if Codex is running in tracked background mode
+8. Use `claude -p --resume <id>` for the same tracked Claude task, or `--continue` only when there is no ambiguity
+9. Create worktrees only if parallel coding is explicitly needed
+10. Have Hermes perform final validation
+11. Have Hermes summarize results, risks, and next steps
 
 For remote projects, add one more step near the start:
 
@@ -825,15 +830,19 @@ If Hermes is continuing the **same task in the same directory or worktree**, pre
 
 ```bash
 cd /Users/chatsign/Worktrees/project-a/feat-login
-claude -p "Continue the current task. Read AGENTS.md again if needed, keep the same scope, and run the relevant tests before finishing." --continue --max-turns 12
+claude -p "Continue the current task. Read AGENTS.md again if needed, keep the same scope, and run the relevant tests before finishing." --resume 75e2167f-example --max-turns 12
 ```
+
+Use bare `--continue` only when the same task is continuing in the same directory and the control tower knows there is no competing Claude session for that worktree.
 
 Current default policy:
 
 - do not keep Claude Code permanently running in tmux unless the task truly needs a long-lived interactive session
 - do not spawn multiple concurrent Claude workers by default
 - prefer one active Claude task at a time, supervised by Hermes
-- use `--continue` only for the same task and the same working directory
+- record Claude `session_id` values in `PROJECT.md` under `Current Workers`
+- prefer `--resume <id>` for tracked Claude continuations
+- use `--continue` only for the same task and the same working directory when there is no session ambiguity
 - do not use `--dangerously-skip-permissions` by default; only treat it as an explicit exception for a clearly isolated, high-trust task
 
 Good fit:
@@ -850,6 +859,8 @@ Use Codex for bounded tasks and review:
 ```bash
 codex exec --full-auto "Read AGENTS.md and fix the clearly actionable lint and typing issues in this worktree. Do not broaden scope." -C /Users/chatsign/Worktrees/project-a/fix-lint
 ```
+
+If Codex runs as a tracked background process, record its Hermes `process session id` in `PROJECT.md` under `Current Workers` so later polling, log checks, and input go to the correct worker.
 
 Good fit:
 
@@ -883,7 +894,8 @@ For the current simplified operating mode, Hermes should still prefer:
 
 - one active remote coding worker at a time
 - `claude -p` for the first pass
-- `claude -p --continue` only when the same remote task is continuing in the same remote directory or worktree
+- record the Claude `session_id` in `PROJECT.md` and prefer `claude -p --resume <id>` for tracked remote continuations
+- use `claude -p --continue` only when the same remote task is continuing in the same remote directory or worktree and there is no session ambiguity
 
 ---
 

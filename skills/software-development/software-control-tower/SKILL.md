@@ -142,7 +142,10 @@ Unless there is a clear reason to parallelize, Hermes should prefer:
 - one active coding worker at a time
 - no persistent tmux-based Claude session by default
 - `claude -p` for the first pass
-- `claude -p --continue` only when continuing the same task in the same directory or worktree
+- record the returned Claude `session_id` in `PROJECT.md` under `Current Workers`
+- prefer `claude -p --resume <id>` when continuing a tracked Claude task
+- use `claude -p --continue` only when continuing the same task in the same directory or worktree and there is no session ambiguity
+- record Codex `process session id` values in `PROJECT.md` under `Current Workers` when Codex is running as a tracked background worker
 - no `--dangerously-skip-permissions` by default; only allow it as an explicit exception for a clearly isolated, high-trust task
 
 ### 4. Hermes is the final verifier
@@ -340,18 +343,24 @@ cd /path/to/worktrees/project/feat-login
 claude -p "Read AGENTS.md and implement the first phase of the login feature. Run the relevant tests before finishing." --max-turns 12
 ```
 
-For another pass on the same task in the same directory or worktree, prefer:
+After the first Claude run, Hermes should record the returned Claude `session_id` in `PROJECT.md` under `Current Workers`.
+
+For another pass on the same tracked task, prefer:
 
 ```bash
 cd /path/to/worktrees/project/feat-login
-claude -p "Continue the current task. Re-read AGENTS.md if needed, keep the same scope, and run the relevant tests before finishing." --continue --max-turns 12
+claude -p "Continue the current task. Re-read AGENTS.md if needed, keep the same scope, and run the relevant tests before finishing." --resume 75e2167f-example --max-turns 12
 ```
+
+Use bare `--continue` only when the same task is continuing in the same working directory and Hermes knows there is no competing Claude session for that worktree.
 
 #### Codex example
 
 ```bash
 codex exec --full-auto "Read AGENTS.md and fix the clearly actionable lint and typing issues in this worktree. Do not expand scope." -C /path/to/worktrees/project/fix-lint
 ```
+
+If Codex is started in tracked background mode, Hermes should record the returned Hermes `process session id` in `PROJECT.md` under `Current Workers` so later polling, log reads, or submitted input target the correct worker.
 
 When delegating, Hermes should give workers:
 
@@ -374,7 +383,10 @@ Hermes should prefer prompts that say:
 Hermes should also prefer execution guidance that says:
 
 - keep this as a single active worker unless parallel work is explicitly requested or justified
-- use `claude -p --continue` only for the same task in the same working directory
+- record Claude `session_id` values in `PROJECT.md` under `Current Workers`
+- prefer `claude -p --resume <id>` for tracked Claude continuations
+- use `claude -p --continue` only for the same task in the same working directory when there is no session ambiguity
+- record Codex `process session id` values whenever Codex is being tracked through Hermes background processes
 - do not upgrade to a persistent tmux workflow unless the task genuinely needs multi-turn interactivity
 - do not enable `--dangerously-skip-permissions` unless the user has deliberately accepted that higher-risk mode
 
@@ -505,7 +517,8 @@ Even in remote mode, the current default should stay simple:
 
 - one active remote coding worker at a time
 - `claude -p` for the initial pass
-- `claude -p --continue` only when the same remote task is continuing in the same remote directory or worktree
+- record the Claude `session_id` in `PROJECT.md` and prefer `claude -p --resume <id>` for tracked remote continuations
+- use `claude -p --continue` only when the same remote task is continuing in the same remote directory or worktree and there is no session ambiguity
 
 ### Worker posture in remote mode
 
@@ -604,6 +617,8 @@ It should not replace `AGENTS.md`, and it should not redefine project-wide rules
 - blocked tasks
 - active worktrees
 - current workers
+- worker session IDs when the worker supports resumable sessions
+- worker process session IDs when the worker is tracked through Hermes background processes
 - deployment state
 - current risks
 - special notes for Hermes
