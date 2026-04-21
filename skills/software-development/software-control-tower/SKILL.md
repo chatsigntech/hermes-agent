@@ -1,7 +1,7 @@
 ---
 name: software-control-tower
 description: Use when Hermes should act as the top-level orchestrator for software development. Reads PROJECT.md and AGENTS.md, writes a plan before coding, routes complex implementation to Claude Code, bounded tasks to Codex, enforces git worktrees for parallel execution, and treats Hermes as the command, supervision, audit, and final-review layer.
-version: 1.2.0
+version: 1.3.0
 author: Hermes Agent + chatsign
 license: MIT
 metadata:
@@ -47,6 +47,7 @@ This skill defines the global operating model for development AI:
 - Claude Code and Codex are execution workers
 - planning happens before implementation
 - parallel coding requires worktrees
+- current default execution should stay simple unless parallelism is clearly justified
 - every worker run must be audited
 
 ### Layer 2: Project rules
@@ -62,6 +63,7 @@ For stronger isolation, a project may also use a dedicated Hermes profile.
 Those project files should define:
 
 - project identity and active operational state
+- whether execution is local or remote
 - repository structure
 - build, run, test, and lint commands
 - path and directory boundaries
@@ -97,12 +99,16 @@ Do not use this skill for:
 
 Before using this workflow, check or assume the following:
 
-1. The project lives in a git repository.
+1. The project either:
+   - lives in a local git repository, or
+   - declares `Execution Mode: remote-ssh` and points to a remote git repository in `PROJECT.md`.
 2. The project has a `PROJECT.md` file, an `AGENTS.md` file, or the user has provided equivalent rules.
 3. Claude Code is installed and authenticated if Hermes is expected to route work there.
 4. Codex is installed and authenticated if Hermes is expected to route work there.
 5. Parallel tasks can use separate git worktrees.
 6. The project has an approved location for temporary files and generated artifacts.
+7. For `remote-ssh` projects, SSH connection details and remote project paths are defined clearly enough for Hermes to work safely.
+8. For `remote-ssh` projects, Hermes knows whether remote Claude Code, remote Codex, or plain SSH terminal execution is the intended worker path.
 
 If any of these are missing, call that out early and adjust the workflow instead of pretending the full control-tower pattern is ready.
 
@@ -123,9 +129,21 @@ If the user changes projects, Hermes should:
 
 If multiple coding tasks run in parallel on the same repository, each task must use a dedicated git worktree.
 
+For `remote-ssh` projects, those worktrees should normally live on the remote machine, not in the local control directory.
+
 ### 3. One primary worker per worktree
 
 Do not run Claude Code and Codex against the same worktree at the same time.
+
+### 3a. Default to one active coding worker
+
+Unless there is a clear reason to parallelize, Hermes should prefer:
+
+- one active coding worker at a time
+- no persistent tmux-based Claude session by default
+- `claude -p` for the first pass
+- `claude -p --continue` only when continuing the same task in the same directory or worktree
+- no `--dangerously-skip-permissions` by default; only allow it as an explicit exception for a clearly isolated, high-trust task
 
 ### 4. Hermes is the final verifier
 
@@ -165,6 +183,26 @@ Prefer:
 - system temporary directories
 
 If the project does not define where temporary files belong, Hermes should require that rule to be added to `AGENTS.md`.
+
+### 6a. Remote-controlled projects must keep control-plane and code-plane separate
+
+If `PROJECT.md` declares `Execution Mode: remote-ssh`:
+
+- the local project directory is a control directory
+- the remote project root is the real source tree
+- Hermes must not treat the local control directory as if it contained the production code
+- code edits, tests, git status checks, and worktree creation should happen against the remote project root
+- local edits should mostly be limited to `PROJECT.md`, `AGENTS.md`, `CLAUDE.md`, and plan documents
+
+### 6b. Remote-controlled projects must prefer remote execution over local indirection
+
+If a project is `remote-ssh`, Hermes should prefer this order:
+
+1. remote Claude Code or remote Codex running on the remote host
+2. Hermes executing directly over the SSH terminal backend
+3. local Claude Code or local Codex that happen to shell out over SSH
+
+Treat option 3 as a temporary or compatibility path, not the default steady-state model for a long-lived remote project.
 
 ### 7. Hermes must audit every worker run
 
@@ -222,6 +260,7 @@ Before planning or delegating, Hermes should read:
 Use them like this:
 
 - `PROJECT.md` = current state, active tasks, deployment, worktrees, blockers
+- `PROJECT.md` also defines whether the real code is local or remote
 - `AGENTS.md` = stable project rules
 - `CLAUDE.md` = Claude-specific supplement
 
@@ -233,6 +272,7 @@ If these files conflict, prefer:
 
 Hermes should specifically confirm that the project rules define:
 
+- execution mode
 - code directories
 - test directories
 - approved temporary-file locations
@@ -240,6 +280,7 @@ Hermes should specifically confirm that the project rules define:
 - routing expectations for Hermes, Claude Code, and Codex
 - current active tasks or blockers if a `PROJECT.md` exists
 - isolation mode or Hermes profile if hard separation is expected
+- remote host, remote project root, and remote worktree root if `Execution Mode: remote-ssh`
 
 If the project does not yet have a usable `PROJECT.md` or `AGENTS.md`, Hermes should prefer creating or tightening those files before large worker delegation.
 
@@ -276,7 +317,7 @@ Every task should be categorized as one of:
    - review
    - batch fixes
 
-### Step 4: Create worktrees for parallel execution
+### Step 4: Create worktrees only when parallel execution is actually needed
 
 If the same repository needs multiple parallel tasks, Hermes should create dedicated worktrees before launching workers.
 
@@ -288,6 +329,8 @@ git worktree add -b feat/login /path/to/worktrees/project/feat-login main
 git worktree add -b fix/lint /path/to/worktrees/project/fix-lint main
 ```
 
+For `remote-ssh` projects, Hermes should instead create and use worktrees on the remote server, typically under a declared `Remote Worktree Root`.
+
 ### Step 5: Dispatch workers
 
 #### Claude Code example
@@ -295,6 +338,13 @@ git worktree add -b fix/lint /path/to/worktrees/project/fix-lint main
 ```bash
 cd /path/to/worktrees/project/feat-login
 claude -p "Read AGENTS.md and implement the first phase of the login feature. Run the relevant tests before finishing." --max-turns 12
+```
+
+For another pass on the same task in the same directory or worktree, prefer:
+
+```bash
+cd /path/to/worktrees/project/feat-login
+claude -p "Continue the current task. Re-read AGENTS.md if needed, keep the same scope, and run the relevant tests before finishing." --continue --max-turns 12
 ```
 
 #### Codex example
@@ -306,6 +356,7 @@ codex exec --full-auto "Read AGENTS.md and fix the clearly actionable lint and t
 When delegating, Hermes should give workers:
 
 - exact repository or worktree path
+- whether that path is local or remote
 - the task goal
 - scope boundaries
 - test command
@@ -319,6 +370,19 @@ Hermes should prefer prompts that say:
 - do not create duplicate utilities if an equivalent already exists
 - place disposable files in `tmp/`, `.artifacts/`, or the system temp directory
 - summarize any uncertainty instead of guessing silently
+
+Hermes should also prefer execution guidance that says:
+
+- keep this as a single active worker unless parallel work is explicitly requested or justified
+- use `claude -p --continue` only for the same task in the same working directory
+- do not upgrade to a persistent tmux workflow unless the task genuinely needs multi-turn interactivity
+- do not enable `--dangerously-skip-permissions` unless the user has deliberately accepted that higher-risk mode
+
+For `remote-ssh` projects, Hermes should also remind workers:
+
+- the local control directory is not the source tree
+- code changes, tests, and git operations happen on the remote project root or remote worktree
+- remote status should be refreshed before treating results as final
 
 ### Step 6: Validate centrally
 
@@ -357,6 +421,10 @@ For every worker task, Hermes should explicitly review:
 5. **Documentation alignment**
    - Did its changes require updates to `AGENTS.md`, `CLAUDE.md`, or project docs?
 
+6. **Remote-state alignment**
+   - If this is a remote-controlled project, did the worker operate on the remote project root instead of the local control directory?
+   - Did Hermes refresh remote git state before accepting the result?
+
 If the audit fails, Hermes should not treat the task as complete.
 
 ### Step 8: Summarize clearly
@@ -389,6 +457,89 @@ If only Weixin is available, Hermes should treat it as a **single active desk** 
 
 ---
 
+## Remote-Controlled Project Mode
+
+Some projects are controlled locally but developed remotely.
+
+In that pattern:
+
+- the local directory is the control plane
+- the remote repository is the execution plane
+- Hermes reads rules locally but executes work remotely over SSH
+
+Typical `PROJECT.md` fields for this mode are:
+
+- `Execution Mode: remote-ssh`
+- `Local Control Path`
+- `SSH Host`
+- `SSH User`
+- `SSH Port`
+- `Remote Project Root`
+- `Remote Worktree Root`
+- `Preferred Worker Strategy`
+- `Remote Claude Code`
+- `Remote Codex`
+
+Hermes should use those fields to decide where real work happens.
+
+### Remote-mode rules
+
+When a project is `remote-ssh`:
+
+- do not assume local `src/` and `tests/` paths are authoritative
+- perform `git status`, test runs, lint runs, and code edits against the remote project root
+- keep local edits focused on control files and plans
+- if parallel tasks are needed, create remote worktrees instead of local ones
+
+### Remote execution priority
+
+For `remote-ssh` projects, Hermes should prefer:
+
+1. running Claude Code or Codex on the remote host beside the real repository
+2. falling back to Hermes-over-SSH terminal execution
+3. using local Claude Code or Codex over SSH only when the remote host is not ready yet and the task is still worth doing
+
+The control tower should treat "control locally, execute remotely" as the normal remote-project posture.
+
+Even in remote mode, the current default should stay simple:
+
+- one active remote coding worker at a time
+- `claude -p` for the initial pass
+- `claude -p --continue` only when the same remote task is continuing in the same remote directory or worktree
+
+### Worker posture in remote mode
+
+Hermes may still route work to Claude Code or Codex, but the important distinction is:
+
+- the worker path is remote
+- the control tower remains local
+
+If a remote machine does not have Claude Code or Codex available, Hermes should still preserve the same orchestration model and execute through the SSH terminal backend directly.
+
+### Remote preflight
+
+Before Hermes routes a `remote-ssh` project to Claude Code or Codex, it should verify:
+
+- `which claude` on the remote host
+- `which codex` on the remote host
+- whether the expected authentication already works
+- whether the remote project root and remote worktree root are reachable
+
+If those checks fail, Hermes should downgrade the task to SSH terminal execution immediately instead of planning around unavailable remote workers.
+
+### Current architecture constraint
+
+Hermes' current SSH terminal backend is still primarily configured through profile/global terminal settings.
+
+Until Hermes supports stable per-session or per-task remote backend overrides, remote-controlled projects should use one of these patterns:
+
+- one active remote target per profile, or
+- one dedicated profile per long-lived remote project
+
+That keeps the control tower aligned with Hermes' current architecture and reduces cross-project host confusion.
+
+---
+
 ## Project Directory Contract
 
 Hermes should encourage each project to use a predictable layout such as:
@@ -411,6 +562,7 @@ project-root/
 
 At minimum, Hermes should know:
 
+- whether execution is local or remote
 - where production code belongs
 - where tests belong
 - where scripts belong
@@ -447,6 +599,7 @@ It should not replace `AGENTS.md`, and it should not redefine project-wide rules
 
 - repo URL
 - local path
+- execution mode
 - active tasks
 - blocked tasks
 - active worktrees
@@ -456,6 +609,7 @@ It should not replace `AGENTS.md`, and it should not redefine project-wide rules
 - special notes for Hermes
 - isolation mode
 - Hermes profile if dedicated isolation is in use
+- remote host and remote project root when applicable
 
 ### Strong-isolation projects
 
@@ -483,8 +637,20 @@ Split the work into:
 1. control-tower tasks for yourself
 2. complex tasks for Claude Code
 3. bounded tasks for Codex
+Default to one active coding worker unless parallel work is clearly worth the overhead.
 Use dedicated git worktrees for any parallel coding tasks.
 After execution, do final validation and summarize risks.
+```
+
+For a remote-controlled project, Hermes should also be comfortable with prompts like:
+
+```text
+Control directory is /path/to/project-control.
+Read PROJECT.md first.
+This project uses Execution Mode: remote-ssh.
+Use the remote project root and remote worktree root from PROJECT.md for code changes, tests, and git operations.
+Do not treat the local control directory as the real source tree.
+Write a plan before implementation, then route work accordingly.
 ```
 
 Hermes should also be comfortable issuing audit-style instructions such as:
@@ -534,6 +700,15 @@ Result:
 - random root-level files
 - hidden temporary state
 - repository drift
+
+### Treating a remote project like a local repository
+
+Result:
+
+- edits happen in the wrong place
+- local control files drift away from remote reality
+- tests are run against the wrong checkout
+- status reports become unreliable
 
 ### Skipping `AGENTS.md`
 

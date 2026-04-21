@@ -17,6 +17,11 @@ This template is intentionally influenced by the common patterns used across mod
 
 Use this file as the canonical starting point when creating a new project or tightening an existing one.
 
+It supports both:
+
+- **local projects** where the repository and code live on the local machine
+- **remote-controlled projects** where the local directory is only the control plane and the real code lives on a remote server
+
 ---
 
 ## Layered Model
@@ -118,6 +123,28 @@ project-root/
 - Put scratch output in `tmp/`, `.artifacts/`, or the system temp directory.
 - Add `tmp/` and `.artifacts/` to `.gitignore` unless they are intentionally versioned.
 
+### Remote-controlled structure variant
+
+If the real code lives on a remote server, the local directory should be treated as a **control directory**:
+
+```text
+project-control/
+  PROJECT.md
+  AGENTS.md
+  CLAUDE.md
+  README.md
+  docs/
+    plans/
+    architecture/
+```
+
+In this mode:
+
+- the local directory stores project rules and operational state
+- the real source tree lives at a remote path such as `/srv/project-a`
+- worktrees, tests, and code edits happen remotely
+- the local control directory should not pretend to be the real source checkout
+
 ---
 
 ## Best-Practice `AGENTS.md` Template
@@ -161,6 +188,25 @@ Do not create new root-level files unless explicitly required.
 - Format: `ruff format .`
 
 If frontend exists, list the frontend commands too.
+
+## Remote-Controlled Project Override
+
+If `PROJECT.md` declares `Execution Mode: remote-ssh`, reinterpret this file with the following rules:
+
+- the local directory is a control directory, not the real source checkout
+- `src/`, `tests/`, `scripts/`, and similar paths refer to the remote project root unless explicitly marked local
+- install, run, test, lint, and build commands should execute against the remote project root or remote worktree
+- the local control directory should usually only hold `PROJECT.md`, `AGENTS.md`, `CLAUDE.md`, plans, and architecture notes
+
+For remote-controlled projects, make the remote nature explicit inside `AGENTS.md` itself. A small clause like this is usually enough:
+
+```md
+## Execution Mode
+
+- This project is `remote-ssh`
+- The local repository directory is only the control plane
+- All code changes, tests, git operations, and worktrees must run against the remote project root declared in `PROJECT.md`
+```
 
 ## Architecture Boundaries
 
@@ -263,11 +309,13 @@ This file is intentionally different from `AGENTS.md`:
 - Name: my-project
 - Repo: https://github.com/owner/my-project
 - Local Path: /Users/chatsign/Projects/my-project
+- Local Control Path: /Users/chatsign/Projects/my-project
 - Default Branch: main
 - Isolation Mode: shared-profile
 - Hermes Profile: default
 - Stack: Python, FastAPI, React, PostgreSQL
 - Type: web service
+- Execution Mode: local
 
 ## Structure
 
@@ -287,6 +335,26 @@ This file is intentionally different from `AGENTS.md`:
 - Test Frontend: `pnpm test`
 - Lint: `ruff check . && pnpm lint`
 - Build: `pnpm build`
+
+## Remote Execution
+
+- SSH Host:
+- SSH User:
+- SSH Port: 22
+- Remote Project Root:
+- Remote Worktree Root:
+- Preferred Worker Strategy: `remote-cli` / `ssh-terminal` / `local-cli-over-ssh`
+- Remote Claude Code: installed? authenticated?
+- Remote Codex: installed? authenticated?
+- Remote Python:
+- Remote Node:
+
+Fill this section only when `Execution Mode` is `remote-ssh`.
+
+For long-lived remote projects, also record whether this project is expected to:
+
+- share a profile with other remote targets, or
+- use a dedicated Hermes profile for host isolation
 
 ## Work Queue
 
@@ -345,6 +413,9 @@ This file is intentionally different from `AGENTS.md`:
 - Search for existing helpers before introducing new abstractions
 - Temporary files must stay in `tmp/` or `.artifacts/`
 - Ask before changing deployment configuration
+- Default to one active coding worker at a time unless parallelism is clearly justified
+- Prefer `claude -p` for a fresh task and `claude -p --continue` only for the same task in the same directory or worktree
+- If `Execution Mode` is `remote-ssh`, prefer remote Claude/Codex first, SSH terminal second, and local CLI over SSH only as a temporary fallback
 ````
 
 ### What belongs in `PROJECT.md`
@@ -353,6 +424,7 @@ Use `PROJECT.md` for live control-plane information:
 
 - GitHub repo URL
 - local path
+- execution mode
 - current tasks
 - active worktrees
 - worker assignments
@@ -361,6 +433,7 @@ Use `PROJECT.md` for live control-plane information:
 - active blockers
 - isolation mode
 - Hermes profile if the project uses a dedicated one
+- remote host and remote project root when applicable
 
 ### What does **not** belong in `PROJECT.md`
 
@@ -417,10 +490,12 @@ This file should stay smaller than `AGENTS.md`.
 
 ## Read Order
 
-1. Read `AGENTS.md` first
-2. Use this file only as a supplement
+1. Read `PROJECT.md` first if it exists
+2. Then read `AGENTS.md`
+3. Use this file only as a supplement
 
 If this file conflicts with `AGENTS.md`, follow `AGENTS.md` and report the conflict.
+If `PROJECT.md` defines execution mode, remote roots, or active worktree state, do not ignore it.
 
 ## Claude Workflow
 
@@ -491,6 +566,12 @@ After each Claude Code or Codex task, Hermes should review against this checklis
 
 - Did it actually run the relevant tests?
 - Is there evidence, not just a claim?
+
+### Remote execution
+
+- If the project uses `remote-ssh`, did Hermes refresh remote git state first?
+- Did the worker operate on the remote project root or remote worktree instead of the local control directory?
+- Are remote worktree paths and active workers still correctly reflected in `PROJECT.md`?
 
 ### Documentation
 
