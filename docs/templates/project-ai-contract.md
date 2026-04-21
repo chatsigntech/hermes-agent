@@ -22,6 +22,8 @@ It supports both:
 - **local projects** where the repository and code live on the local machine
 - **remote-controlled projects** where the local directory is only the control plane and the real code lives on a remote server
 
+This template is also intended to support a **project bootstrap** workflow inside `software-control-tower`: Hermes should use it to create missing project-control files before heavy implementation starts.
+
 ---
 
 ## Layered Model
@@ -72,6 +74,31 @@ Use a dedicated Hermes profile when you need:
 - the ability to remove the project later as a near-complete unit
 
 For ordinary multi-project development by one operator, a shared profile plus good session and worktree discipline is usually enough.
+
+---
+
+## Bootstrap Order
+
+When a project is missing its control files, Hermes should bootstrap them in this order:
+
+1. `PROJECT.md`
+2. `AGENTS.md`
+3. `CLAUDE.md` only when Claude Code is expected to participate
+
+The reason for this order is simple:
+
+- `PROJECT.md` captures live identity, execution mode, remote host information, and current state
+- `AGENTS.md` captures the stable development rules
+- `CLAUDE.md` is only a supplement and should not define the project by itself
+
+Hermes should infer as much as possible from the repository before asking the user for missing high-authority facts.
+
+When bootstrap relies on inference rather than confirmed runtime evidence:
+
+- create missing files freely
+- update existing files incrementally
+- mark guessed commands, paths, or worker settings as `UNVERIFIED` or `TODO`
+- avoid large rewrites of user-authored project files without explicit approval
 
 ---
 
@@ -602,19 +629,22 @@ After each Claude Code or Codex task, Hermes should review against this checklis
 
 For a new project:
 
-1. Create the recommended directory structure
-2. Add `PROJECT.md` from the template above
-3. Add `AGENTS.md` from the template above
-4. Add `CLAUDE.md` from the template above
-5. Fill in the real commands and architecture boundaries
-6. Make the control-tower workflow enforce these rules during every worker run
+1. Inspect the repository or control directory
+2. Create the recommended directory structure where practical
+3. Add `PROJECT.md` from the template above
+4. Add `AGENTS.md` from the template above
+5. Add `CLAUDE.md` from the template above only if Claude Code is part of the intended workflow
+6. Fill in the real commands, execution mode, and architecture boundaries
+7. Make the control-tower workflow enforce these rules during every worker run
 
 For an existing project:
 
-1. Map the current structure to the contract
-2. Add missing path rules
-3. Add missing temporary-file rules
-4. Add missing reuse rules
-5. Tighten the commands and review gates until Hermes can audit reliably
+1. Inspect what already exists
+2. Map the current structure to the contract
+3. Create any missing `PROJECT.md`, `AGENTS.md`, or `CLAUDE.md`
+4. Add missing path rules
+5. Add missing temporary-file rules
+6. Add missing reuse rules
+7. Tighten the commands and review gates until Hermes can audit reliably
 
 This is what turns a project from “AI can edit code here” into “AI can develop here under supervision.”

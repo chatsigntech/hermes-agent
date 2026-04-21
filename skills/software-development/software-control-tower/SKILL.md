@@ -1,7 +1,7 @@
 ---
 name: software-control-tower
 description: Use when Hermes should act as the top-level orchestrator for software development. Reads PROJECT.md and AGENTS.md, writes a plan before coding, routes complex implementation to Claude Code, bounded tasks to Codex, enforces git worktrees for parallel execution, and treats Hermes as the command, supervision, audit, and final-review layer.
-version: 1.3.0
+version: 1.4.1
 author: Hermes Agent + chatsign
 license: MIT
 metadata:
@@ -32,6 +32,13 @@ In this workflow, Hermes should act more like:
 - final reviewer
 
 and less like another free-form coding worker.
+
+This skill also includes a built-in **Project Bootstrap** function:
+
+- detect whether a project is missing `PROJECT.md`, `AGENTS.md`, or `CLAUDE.md`
+- gather the minimum information needed from the repository and the user
+- create the missing project-control files before heavy implementation starts
+- tighten vague project rules when Hermes cannot safely supervise worker execution
 
 ---
 
@@ -75,6 +82,40 @@ Hermes should first apply this skill's global rules, then apply the active proje
 
 If project rules are missing or vague, Hermes should tighten the contract before delegating substantial work.
 
+### Built-in Project Bootstrap
+
+When a project is not yet ready for supervised AI development, Hermes should enter a lightweight bootstrap flow instead of pretending the control-tower contract already exists.
+
+The bootstrap flow should:
+
+1. inspect the repository or control directory
+2. determine whether the project is:
+   - a local source repository
+   - a remote-controlled `remote-ssh` project
+   - a partial control-plane repository that needs clarification
+3. check for these files:
+   - `PROJECT.md`
+   - `AGENTS.md`
+   - `CLAUDE.md` if Claude Code is expected to participate
+4. extract what can be learned automatically:
+   - repo URL
+   - local path
+   - default branch
+   - visible directory structure
+   - likely commands
+   - remote indicators from deployment docs or infrastructure files
+5. ask only for the minimum missing user-owned facts, such as:
+   - project goal
+   - real remote host or remote project root
+   - risk boundaries
+   - whether Claude Code or Codex should be part of the workflow
+6. create missing files automatically, but update existing files incrementally rather than rewriting them wholesale
+7. treat inferred commands and paths as provisional until verified; if they cannot be verified yet, mark them as `UNVERIFIED` or `TODO` instead of presenting them as settled
+8. if a substantial rewrite of an existing `PROJECT.md`, `AGENTS.md`, or `CLAUDE.md` would be needed, summarize the proposed changes and get user approval first
+9. only then move into normal planning and worker routing
+
+Hermes should treat project bootstrapping as part of the control-tower role, not as a separate optional task the user must remember to request.
+
 ---
 
 ## When to Use
@@ -111,6 +152,8 @@ Before using this workflow, check or assume the following:
 8. For `remote-ssh` projects, Hermes knows whether remote Claude Code, remote Codex, or plain SSH terminal execution is the intended worker path.
 
 If any of these are missing, call that out early and adjust the workflow instead of pretending the full control-tower pattern is ready.
+
+If the project is not yet documented well enough to satisfy these preconditions, Hermes should switch into Project Bootstrap mode and create or tighten the missing project-control files first.
 
 ---
 
@@ -252,6 +295,26 @@ Hermes should keep ownership of:
 
 ## Standard Workflow
 
+### Step 0: Bootstrap the project contract when needed
+
+Before normal planning, Hermes should check whether the project is sufficiently documented for supervised development.
+
+At minimum, Hermes should look for:
+
+- `PROJECT.md`
+- `AGENTS.md`
+- `CLAUDE.md` if Claude Code is part of the intended workflow
+
+If these are missing, stale, or too vague, Hermes should:
+
+1. inspect the project or control directory
+2. infer what it can from the repository and docs
+3. ask only for missing high-authority facts
+4. create or update the missing project files
+5. summarize the resulting contract before starting implementation planning
+
+The normal planning and worker-routing flow should begin only after the project contract is usable enough for Hermes to supervise work safely.
+
 ### Step 1: Read the project rules first
 
 Before planning or delegating, Hermes should read:
@@ -285,7 +348,7 @@ Hermes should specifically confirm that the project rules define:
 - isolation mode or Hermes profile if hard separation is expected
 - remote host, remote project root, and remote worktree root if `Execution Mode: remote-ssh`
 
-If the project does not yet have a usable `PROJECT.md` or `AGENTS.md`, Hermes should prefer creating or tightening those files before large worker delegation.
+If the project does not yet have a usable `PROJECT.md` or `AGENTS.md`, Hermes should return to Step 0 and bootstrap or tighten them before large worker delegation.
 
 ### Step 2: Plan before coding
 

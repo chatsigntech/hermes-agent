@@ -16,6 +16,13 @@ This guide shows how to use Hermes as a **top-level orchestrator** for software 
 
 This is the most reliable pattern when you want one long-lived Hermes instance to coordinate **multiple software projects** without mixing contexts.
 
+It works best when Hermes also treats **project bootstrap** as part of the job:
+
+- detect missing project-control files
+- guide the user through the minimum missing facts
+- create `PROJECT.md`, `AGENTS.md`, and optionally `CLAUDE.md`
+- only then begin heavy implementation routing
+
 ---
 
 ## Table of Contents
@@ -27,20 +34,21 @@ This is the most reliable pattern when you want one long-lived Hermes instance t
 5. [Project Directory Contract](#project-directory-contract)
 6. [Remote-Controlled Projects](#remote-controlled-projects)
 7. [AI-Facing Documentation Contract](#ai-facing-documentation-contract)
-8. [The Execution Model](#the-execution-model)
-9. [Worktree Strategy](#worktree-strategy)
-10. [Project Rules: `AGENTS.md`](#project-rules-agentsmd)
-11. [When to Use `CLAUDE.md`](#when-to-use-claudemd)
-12. [Multi-Project Operation Model](#multi-project-operation-model)
-13. [Isolation Levels and Cleanup](#isolation-levels-and-cleanup)
-14. [Messaging Setup for Multi-Project Control](#messaging-setup-for-multi-project-control)
-15. [Daily Workflow](#daily-workflow)
-16. [Worker Invocation Patterns](#worker-invocation-patterns)
-17. [Audit and Review Loop](#audit-and-review-loop)
-18. [Validation Model](#validation-model)
-19. [Recommended Skills](#recommended-skills)
-20. [Common Failure Modes](#common-failure-modes)
-21. [Recommended Starting Setup](#recommended-starting-setup)
+8. [Project Bootstrap](#project-bootstrap)
+9. [The Execution Model](#the-execution-model)
+10. [Worktree Strategy](#worktree-strategy)
+11. [Project Rules: `AGENTS.md`](#project-rules-agentsmd)
+12. [When to Use `CLAUDE.md`](#when-to-use-claudemd)
+13. [Multi-Project Operation Model](#multi-project-operation-model)
+14. [Isolation Levels and Cleanup](#isolation-levels-and-cleanup)
+15. [Messaging Setup for Multi-Project Control](#messaging-setup-for-multi-project-control)
+16. [Daily Workflow](#daily-workflow)
+17. [Worker Invocation Patterns](#worker-invocation-patterns)
+18. [Audit and Review Loop](#audit-and-review-loop)
+19. [Validation Model](#validation-model)
+20. [Recommended Skills](#recommended-skills)
+21. [Common Failure Modes](#common-failure-modes)
+22. [Recommended Starting Setup](#recommended-starting-setup)
 
 ---
 
@@ -378,6 +386,61 @@ Use `CLAUDE.md` only for Claude Code-specific guidance such as:
 
 If `CLAUDE.md` duplicates or contradicts `AGENTS.md`, Hermes should flag that during review.
 
+## Project Bootstrap
+
+`software-control-tower` should treat project bootstrap as a built-in control-tower function, not as an optional extra the user must remember to request.
+
+Before heavy planning or worker routing, Hermes should check whether the project has a usable:
+
+- `PROJECT.md`
+- `AGENTS.md`
+- `CLAUDE.md` when Claude Code is expected to participate
+
+If one or more are missing, weak, or stale, Hermes should enter **bootstrap mode**.
+
+### Bootstrap flow
+
+1. Inspect the repository or control directory.
+2. Infer what can be learned automatically:
+   - repo URL
+   - local path
+   - default branch
+   - visible structure
+   - likely commands
+   - evidence of local or remote execution
+3. Ask the user only for the missing high-authority facts:
+   - project goal
+   - real remote host and remote root when applicable
+   - risk boundaries
+   - whether Claude Code or Codex should be involved
+4. Create or update:
+   - `PROJECT.md`
+   - `AGENTS.md`
+   - `CLAUDE.md` if needed
+5. Summarize the resulting project contract.
+6. Only then begin normal planning and worker routing.
+
+### Bootstrap safety rules
+
+Bootstrap should be conservative when project files already exist.
+
+- Missing files may be created automatically.
+- Existing files should be updated incrementally, not rewritten wholesale.
+- Inferred commands, paths, or worker settings should be verified before being treated as authoritative.
+- If Hermes cannot verify a command yet, it should mark it clearly as `UNVERIFIED` or `TODO` instead of presenting it as settled fact.
+- If a substantial rewrite of an existing `PROJECT.md`, `AGENTS.md`, or `CLAUDE.md` is needed, Hermes should summarize the proposed changes and get user approval before replacing large sections.
+
+### Why bootstrap matters
+
+Without this step, Hermes tends to operate on incomplete assumptions:
+
+- local control directories get mistaken for real code trees
+- commands are guessed instead of verified
+- worker boundaries stay vague
+- project rules stay trapped in chat history instead of files
+
+By folding bootstrap into the skill, Hermes can proactively turn a vague repository into a supervised development project.
+
 ### Recommended `AGENTS.md` sections
 
 Use a structure like this:
@@ -458,6 +521,8 @@ Write a plan, then split the work into:
 3. tasks for Codex
 Use separate git worktrees for any parallel implementation.
 ```
+
+If the project is missing a usable `PROJECT.md` or `AGENTS.md`, Hermes should pause normal execution and run project bootstrap first.
 
 For a remote-controlled project:
 
