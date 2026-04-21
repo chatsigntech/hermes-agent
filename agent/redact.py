@@ -64,8 +64,21 @@ _ENV_ASSIGN_RE = re.compile(
 
 # JSON field patterns: "apiKey": "value", "token": "value", etc.
 _JSON_KEY_NAMES = r"(?:api_?[Kk]ey|token|secret|password|access_token|refresh_token|auth_token|bearer|secret_value|raw_secret|secret_input|key_material)"
-_JSON_FIELD_RE = re.compile(
-    rf'("{_JSON_KEY_NAMES}")\s*:\s*"([^"]+)"',
+_STRUCTURED_SECRET_FIELD_RE = re.compile(
+    rf'(?P<kq>["\'])(?P<key>{_JSON_KEY_NAMES})(?P=kq)\s*:\s*(?P<vq>["\'])(?P<value>[^"\']+)(?P=vq)',
+    re.IGNORECASE,
+)
+
+# Natural-language password labels that commonly show up in logs or
+# pasted chat content. Deliberately uses ":" / "：" / "is" / "是" separators
+# instead of "=" to avoid over-redacting normal source code assignments like
+# `password = input()`.
+_PASSWORD_LABEL_RE = re.compile(
+    r"(?P<label>\b(?:password|passwd|passphrase|pwd)\b|密码|口令)"
+    r"(?P<sep>\s*(?::|：|is\b|是)\s*)"
+    r"(?P<quote>['\"]?)"
+    r"(?P<value>[^\s'\";,]+)"
+    r"(?P=quote)",
     re.IGNORECASE,
 )
 
@@ -134,11 +147,29 @@ def redact_sensitive_text(text: str) -> str:
         return f"{name}={quote}{_mask_token(value)}{quote}"
     text = _ENV_ASSIGN_RE.sub(_redact_env, text)
 
-    # JSON fields: "apiKey": "value"
-    def _redact_json(m):
-        key, value = m.group(1), m.group(2)
-        return f'{key}: "{_mask_token(value)}"'
-    text = _JSON_FIELD_RE.sub(_redact_json, text)
+    # Structured fields: {"apiKey": "value"} or {'password': 'value'}
+    def _redact_structured_secret(m):
+        key_quote = m.group("kq")
+        key = m.group("key")
+        value_quote = m.group("vq")
+        value = m.group("value")
+        return f"{key_quote}{key}{key_quote}: {value_quote}{_mask_token(value)}{value_quote}"
+
+    text = _STRUCTURED_SECRET_FIELD_RE.sub(_redact_structured_secret, text)
+
+    # Natural-language password labels: "password: hunter2", "密码：abc123"
+    def _redact_password_label(m):
+        value = m.group("value")
+        # Avoid obvious code-like expressions in logs such as
+        # "password is input()" or "password: config.get(...)".
+        if any(ch in value for ch in "(){}[]"):
+            return m.group(0)
+        lowered = value.lower()
+        if lowered in {"none", "null", "true", "false"}:
+            return m.group(0)
+        return f"{m.group('label')}{m.group('sep')}{m.group('quote')}{_mask_token(value)}{m.group('quote')}"
+
+    text = _PASSWORD_LABEL_RE.sub(_redact_password_label, text)
 
     # Authorization headers
     text = _AUTH_HEADER_RE.sub(

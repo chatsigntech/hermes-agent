@@ -131,6 +131,37 @@ class TestJsonFields:
         result = redact_sensitive_text(text)
         assert result == text
 
+    def test_python_dict_password_field(self):
+        text = "{'password': 'hunter2-secret'}"
+        result = redact_sensitive_text(text)
+        assert "hunter2-secret" not in result
+        assert "'password':" in result
+
+
+class TestPasswordLabels:
+    def test_password_colon_redacted(self):
+        text = "password: hunter2-secret"
+        result = redact_sensitive_text(text)
+        assert "hunter2-secret" not in result
+        assert "password:" in result
+
+    def test_password_is_redacted(self):
+        text = "Password is S3cr3tPass!"
+        result = redact_sensitive_text(text)
+        assert "S3cr3tPass!" not in result
+        assert "Password is" in result
+
+    def test_chinese_password_label_redacted(self):
+        text = "服务器密码：abc123XYZ"
+        result = redact_sensitive_text(text)
+        assert "abc123XYZ" not in result
+        assert "密码：" in result
+
+    def test_password_code_like_text_unchanged(self):
+        text = "password is input()"
+        result = redact_sensitive_text(text)
+        assert result == text
+
 
 class TestAuthHeaders:
     def test_bearer_token(self):
