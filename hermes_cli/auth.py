@@ -796,6 +796,30 @@ def is_provider_explicitly_configured(provider_id: str) -> bool:
     return False
 
 
+def _configured_provider_base_url(provider_id: str) -> str:
+    """Return config.yaml's model.base_url when it belongs to provider_id.
+
+    This keeps provider-scoped helper paths aligned with the user's persisted
+    model selection without leaking one provider's endpoint into another.
+    Environment variable overrides still win at call sites.
+    """
+    normalized = (provider_id or "").strip().lower()
+    if not normalized:
+        return ""
+
+    try:
+        cfg = read_raw_config()
+        model_cfg = cfg.get("model")
+        if not isinstance(model_cfg, dict):
+            return ""
+        cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
+        if cfg_provider != normalized:
+            return ""
+        return str(model_cfg.get("base_url") or "").strip().rstrip("/")
+    except Exception:
+        return ""
+
+
 def clear_provider_auth(provider_id: Optional[str] = None) -> bool:
     """
     Clear auth state for a provider. Used by `hermes logout`.
@@ -2455,13 +2479,18 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
     env_url = ""
     if pconfig.base_url_env_var:
         env_url = os.getenv(pconfig.base_url_env_var, "").strip()
+    cfg_url = _configured_provider_base_url(provider_id)
 
     if provider_id == "kimi-coding":
-        base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
+        default_url = cfg_url or pconfig.inference_base_url
+        base_url = _resolve_kimi_base_url(api_key, default_url, env_url)
     elif provider_id == "zai":
-        base_url = _resolve_zai_base_url(api_key, pconfig.inference_base_url, env_url)
+        default_url = cfg_url or pconfig.inference_base_url
+        base_url = _resolve_zai_base_url(api_key, default_url, env_url)
     elif env_url:
         base_url = env_url.rstrip("/")
+    elif cfg_url:
+        base_url = cfg_url
     else:
         base_url = pconfig.inference_base_url
 

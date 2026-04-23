@@ -854,6 +854,36 @@ class TestKimiCodeCredentialAutoDetect:
         creds = resolve_api_key_provider_credentials("kimi-coding")
         assert creds["base_url"] == "https://override.example/v1"
 
+    def test_config_base_url_used_for_active_provider(self, monkeypatch):
+        monkeypatch.setenv("KIMI_API_KEY", "sk-legacy-secret-key")
+        monkeypatch.delenv("KIMI_BASE_URL", raising=False)
+        monkeypatch.setattr(
+            "hermes_cli.auth.read_raw_config",
+            lambda: {
+                "model": {
+                    "provider": "kimi-coding",
+                    "base_url": "https://api.moonshot.cn/v1",
+                }
+            },
+        )
+        creds = resolve_api_key_provider_credentials("kimi-coding")
+        assert creds["base_url"] == "https://api.moonshot.cn/v1"
+
+    def test_config_base_url_does_not_leak_to_other_provider(self, monkeypatch):
+        monkeypatch.setenv("KIMI_API_KEY", "sk-legacy-secret-key")
+        monkeypatch.delenv("KIMI_BASE_URL", raising=False)
+        monkeypatch.setattr(
+            "hermes_cli.auth.read_raw_config",
+            lambda: {
+                "model": {
+                    "provider": "zai",
+                    "base_url": "https://api.z.ai/api/coding/paas/v4",
+                }
+            },
+        )
+        creds = resolve_api_key_provider_credentials("kimi-coding")
+        assert creds["base_url"] == MOONSHOT_DEFAULT_URL
+
     def test_non_kimi_providers_unaffected(self, monkeypatch):
         """Ensure the auto-detect logic doesn't leak to other providers."""
         monkeypatch.setenv("GLM_API_KEY", "sk-kim...isnt")
