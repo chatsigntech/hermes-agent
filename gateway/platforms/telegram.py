@@ -73,7 +73,10 @@ from gateway.platforms.base import (
 from gateway.platforms.telegram_network import (
     TelegramFallbackTransport,
     discover_fallback_ips,
+    ip_direct_base_url,
+    ip_direct_httpx_kwargs,
     parse_fallback_ip_env,
+    probe_sni_block,
 )
 
 
@@ -169,6 +172,45 @@ class TelegramAdapter(BasePlatformAdapter):
         if isinstance(configured, str):
             configured = configured.split(",")
         return parse_fallback_ip_env(",".join(str(v) for v in configured) if configured else None)
+
+    async def _resolve_ip_direct_ip(self) -> Optional[str]:
+        """Return the Telegram API IP to use for IP-direct (no-SNI) mode, or None.
+
+        Precedence (mirrors myAgent's api_base_ip semantics):
+            explicit IPv4 via extra.api_base_ip / HERMES_TELEGRAM_API_BASE_IP
+                → return that IP
+            "disabled"                         → return None (skip auto-probe)
+            "" / unset                         → probe; return IP iff SNI RST'd
+        """
+        extra = self.config.extra or {} if getattr(self.config, "extra", None) else {}
+        raw = extra.get("api_base_ip") or os.getenv("HERMES_TELEGRAM_API_BASE_IP", "")
+        value = str(raw or "").strip()
+
+        if value.lower() == "disabled":
+            return None
+
+        if value:
+            try:
+                import ipaddress as _ipa
+                _ipa.ip_address(value)
+                logger.info(
+                    "[%s] Telegram api_base_ip explicitly configured: %s",
+                    self.name, value,
+                )
+                return value
+            except ValueError:
+                logger.warning(
+                    "[%s] Invalid api_base_ip %r; falling back to auto-probe",
+                    self.name, value,
+                )
+
+        probed = await asyncio.to_thread(probe_sni_block)
+        if probed:
+            logger.info(
+                "[%s] Detected api.telegram.org SNI blocked by DPI; enabling IP-direct via %s",
+                self.name, probed,
+            )
+        return probed
 
     @staticmethod
     def _looks_like_polling_conflict(error: Exception) -> bool:
@@ -542,8 +584,17 @@ class TelegramAdapter(BasePlatformAdapter):
 
             proxy_url = resolve_proxy_url()
             disable_fallback = (os.getenv("HERMES_TELEGRAM_DISABLE_FALLBACK_IPS", "").strip().lower() in ("1", "true", "yes", "on"))
+
+            # IP-direct (no-SNI) mode handles DPI networks that RST the TLS
+            # ClientHello whenever SNI=api.telegram.org. It overrides base_url
+            # and disables cert verification, so it is mutually exclusive with
+            # proxy_url and with a user-supplied custom_base_url.
+            ip_direct_ip: Optional[str] = None
+            if not proxy_url and not custom_base_url:
+                ip_direct_ip = await self._resolve_ip_direct_ip()
+
             fallback_ips = self._fallback_ips()
-            if not fallback_ips:
+            if not fallback_ips and not ip_direct_ip and not proxy_url:
                 fallback_ips = await discover_fallback_ips()
                 logger.info(
                     "[%s] Auto-discovered Telegram fallback IPs: %s",
@@ -551,7 +602,24 @@ class TelegramAdapter(BasePlatformAdapter):
                     ", ".join(fallback_ips),
                 )
 
-            if fallback_ips and not proxy_url and not disable_fallback:
+            if ip_direct_ip:
+                logger.info(
+                    "[%s] Telegram IP-direct (no-SNI) mode active via %s",
+                    self.name, ip_direct_ip,
+                )
+                builder = builder.base_url(ip_direct_base_url(ip_direct_ip))
+                builder = builder.base_file_url(
+                    ip_direct_base_url(ip_direct_ip, file=True)
+                )
+                request = HTTPXRequest(
+                    **request_kwargs,
+                    httpx_kwargs=ip_direct_httpx_kwargs(),
+                )
+                get_updates_request = HTTPXRequest(
+                    **request_kwargs,
+                    httpx_kwargs=ip_direct_httpx_kwargs(),
+                )
+            elif fallback_ips and not proxy_url and not disable_fallback:
                 logger.info(
                     "[%s] Telegram fallback IPs active: %s",
                     self.name,
@@ -2114,6 +2182,15 @@ class TelegramAdapter(BasePlatformAdapter):
             return True
         return self._message_matches_mention_patterns(message)
 
+    @staticmethod
+    def _get_incoming_message(update: Update) -> Optional[Message]:
+        """Return new inbound messages/channel posts, excluding edited updates."""
+        if getattr(update, "message", None):
+            return update.message
+        if getattr(update, "channel_post", None):
+            return update.channel_post
+        return None
+
     async def _handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming text messages.
 
@@ -2121,33 +2198,35 @@ class TelegramAdapter(BasePlatformAdapter):
         rapid successive text messages from the same user/chat and aggregate
         them into a single MessageEvent before dispatching.
         """
-        if not update.message or not update.message.text:
+        msg = self._get_incoming_message(update)
+        if not msg or not msg.text:
             return
-        if not self._should_process_message(update.message):
+        if not self._should_process_message(msg):
             return
 
-        event = self._build_message_event(update.message, MessageType.TEXT)
+        event = self._build_message_event(msg, MessageType.TEXT)
         event.text = self._clean_bot_trigger_text(event.text)
         self._enqueue_text_event(event)
     
     async def _handle_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming command messages."""
-        if not update.message or not update.message.text:
+        msg = self._get_incoming_message(update)
+        if not msg or not msg.text:
             return
-        if not self._should_process_message(update.message, is_command=True):
+        if not self._should_process_message(msg, is_command=True):
             return
         
-        event = self._build_message_event(update.message, MessageType.COMMAND)
+        event = self._build_message_event(msg, MessageType.COMMAND)
         await self.handle_message(event)
     
     async def _handle_location_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming location/venue pin messages."""
-        if not update.message:
+        msg = self._get_incoming_message(update)
+        if not msg:
             return
-        if not self._should_process_message(update.message):
+        if not self._should_process_message(msg):
             return
 
-        msg = update.message
         venue = getattr(msg, "venue", None)
         location = getattr(venue, "location", None) if venue else getattr(msg, "location", None)
 
@@ -2301,12 +2380,11 @@ class TelegramAdapter(BasePlatformAdapter):
 
     async def _handle_media_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle incoming media messages, downloading images to local cache."""
-        if not update.message:
+        msg = self._get_incoming_message(update)
+        if not msg:
             return
-        if not self._should_process_message(update.message):
+        if not self._should_process_message(msg):
             return
-        
-        msg = update.message
         
         # Determine media type
         if msg.sticker:

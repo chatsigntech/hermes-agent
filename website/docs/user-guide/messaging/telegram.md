@@ -102,6 +102,8 @@ Add the following to `~/.hermes/.env`:
 ```bash
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
 TELEGRAM_ALLOWED_USERS=123456789    # Comma-separated for multiple users
+# Optional: allow channel posts from specific Telegram channels
+TELEGRAM_ALLOWED_CHATS=-1001234567890
 ```
 
 ### Start the Gateway
@@ -111,6 +113,33 @@ hermes gateway
 ```
 
 The bot should come online within seconds. Send it a message on Telegram to verify.
+
+## Channel Posts
+
+Telegram channels behave differently from DMs and groups:
+
+- Channel posts often have a `sender_chat`, not a normal `from_user`
+- Hermes therefore authorizes **channel posts by chat ID**, not by user ID
+- The bot must usually be a channel admin to receive channel updates reliably
+
+To allow Hermes to process posts from a channel, add the channel ID to `TELEGRAM_ALLOWED_CHATS`:
+
+```bash
+TELEGRAM_ALLOWED_CHATS=-1001234567890,-1009876543210
+```
+
+Or in `~/.hermes/config.yaml`:
+
+```yaml
+telegram:
+  allowed_channels:
+    - -1001234567890
+    - -1009876543210
+```
+
+:::tip
+Telegram channel IDs are negative numbers that typically start with `-100`. Keep `TELEGRAM_ALLOWED_USERS` for human users and `TELEGRAM_ALLOWED_CHATS` for channels.
+:::
 
 ## Webhook Mode
 
@@ -382,6 +411,44 @@ To find a topic's `thread_id`, open the topic in Telegram Web or Desktop and loo
 - **Bot API 9.4 (Feb 2026):** Private Chat Topics — bots can create forum topics in 1-on-1 DM chats via `createForumTopic`. See [Private Chat Topics](#private-chat-topics-bot-api-94) above.
 - **Privacy policy:** Telegram now requires bots to have a privacy policy. Set one via BotFather with `/setprivacy_policy`, or Telegram may auto-generate a placeholder. This is particularly important if your bot is public-facing.
 - **Message streaming:** Bot API 9.x added support for streaming long responses, which can improve perceived latency for lengthy agent replies.
+
+## Troubleshooting Connection Failures
+
+If the gateway log shows `httpx.ConnectError` or `Failed to connect to Telegram`, debug the problem in layers:
+
+1. Test plain HTTPS to Telegram outside the gateway:
+
+```bash
+python - <<'PY'
+import httpx
+r = httpx.get("https://api.telegram.org/botTESTTOKEN/getMe", timeout=10.0)
+print(r.status_code, r.text[:200])
+PY
+```
+
+Expected result: an HTTP response such as `401`, `404`, or JSON from Telegram. If you still get a connect error here, the problem is below Hermes.
+
+2. Check whether the network path itself is blocked.
+
+- If both normal TLS and no-SNI/IP-direct probes fail, the current network path is blocked.
+- In that case, switching Hermes between polling and webhook mode will **not** fix startup, because the bot still needs outbound HTTPS access to the Telegram Bot API.
+- The reliable fix is to change the network path: use a VPN, an HTTP/SOCKS proxy, or run the gateway on a host that can already reach Telegram.
+
+3. Re-test after changing the network path.
+
+Once the network is healthy, the same `httpx` probe above should immediately return an HTTP response instead of `ConnectError`.
+
+4. Confirm the running gateway has a live Telegram socket:
+
+```bash
+lsof -a -p <gateway_pid> -i
+```
+
+An `ESTABLISHED` connection to Telegram on port `443` is a strong sign the adapter is actually online.
+
+:::tip
+Hermes includes Telegram fallback and IP-direct helpers for hostile networks, but they are not a substitute for a working outbound path. If even raw HTTPS cannot reach `api.telegram.org`, fix the network first.
+:::
 
 ## Interactive Model Picker
 

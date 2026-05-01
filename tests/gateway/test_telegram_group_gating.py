@@ -89,6 +89,8 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
     hermes_home.mkdir()
     (hermes_home / "config.yaml").write_text(
         "telegram:\n"
+        "  allowed_channels:\n"
+        "    - \"-999\"\n"
         "  require_mention: true\n"
         "  mention_patterns:\n"
         "    - \"^\\\\s*chompy\\\\b\"\n"
@@ -98,6 +100,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
     )
 
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.delenv("TELEGRAM_ALLOWED_CHATS", raising=False)
     monkeypatch.delenv("TELEGRAM_REQUIRE_MENTION", raising=False)
     monkeypatch.delenv("TELEGRAM_MENTION_PATTERNS", raising=False)
     monkeypatch.delenv("TELEGRAM_FREE_RESPONSE_CHATS", raising=False)
@@ -105,6 +108,7 @@ def test_config_bridges_telegram_group_settings(monkeypatch, tmp_path):
     config = load_gateway_config()
 
     assert config is not None
+    assert __import__("os").environ["TELEGRAM_ALLOWED_CHATS"] == "-999"
     assert __import__("os").environ["TELEGRAM_REQUIRE_MENTION"] == "true"
     assert json.loads(__import__("os").environ["TELEGRAM_MENTION_PATTERNS"]) == [r"^\s*chompy\b"]
     assert __import__("os").environ["TELEGRAM_FREE_RESPONSE_CHATS"] == "-123"

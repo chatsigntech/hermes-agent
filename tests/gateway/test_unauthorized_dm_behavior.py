@@ -12,6 +12,7 @@ from gateway.session import SessionSource
 def _clear_auth_env(monkeypatch) -> None:
     for key in (
         "TELEGRAM_ALLOWED_USERS",
+        "TELEGRAM_ALLOWED_CHATS",
         "DISCORD_ALLOWED_USERS",
         "WHATSAPP_ALLOWED_USERS",
         "SLACK_ALLOWED_USERS",
@@ -62,6 +63,20 @@ def _make_runner(platform: Platform, config: GatewayConfig):
     runner.pairing_store.is_approved.return_value = False
     runner.pairing_store._is_rate_limited.return_value = False
     return runner, adapter
+
+
+def _make_channel_event(chat_id: str, text: str = "hello") -> MessageEvent:
+    return MessageEvent(
+        text=text,
+        message_id="m-channel",
+        source=SessionSource(
+            platform=Platform.TELEGRAM,
+            user_id=None,
+            chat_id=chat_id,
+            chat_name="Announcements",
+            chat_type="channel",
+        ),
+    )
 
 
 def test_whatsapp_lid_user_matches_phone_allowlist_via_session_mapping(monkeypatch, tmp_path):
@@ -128,6 +143,70 @@ def test_star_wildcard_works_for_any_platform(monkeypatch):
         chat_type="dm",
     )
     assert runner._is_user_authorized(source) is True
+
+
+def test_telegram_channel_requires_explicit_chat_allowlist(monkeypatch):
+    _clear_auth_env(monkeypatch)
+
+    runner, _adapter = _make_runner(
+        Platform.TELEGRAM,
+        GatewayConfig(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="t")}),
+    )
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        user_id=None,
+        chat_id="-100123",
+        chat_name="Announcements",
+        chat_type="channel",
+    )
+
+    assert runner._is_user_authorized(source) is False
+
+
+def test_telegram_channel_matches_chat_allowlist(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHATS", "-100123,-100456")
+
+    runner, _adapter = _make_runner(
+        Platform.TELEGRAM,
+        GatewayConfig(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="t")}),
+    )
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        user_id=None,
+        chat_id="-100123",
+        chat_name="Announcements",
+        chat_type="channel",
+    )
+
+    assert runner._is_user_authorized(source) is True
+
+
+@pytest.mark.asyncio
+async def test_authorized_telegram_channel_command_is_not_dropped(monkeypatch):
+    _clear_auth_env(monkeypatch)
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHATS", "-100123")
+
+    runner, _adapter = _make_runner(
+        Platform.TELEGRAM,
+        GatewayConfig(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="t")}),
+    )
+    runner._update_prompt_pending = {}
+    runner._running_agents = {}
+    runner._running_agents_ts = {}
+    runner._pending_messages = {}
+    runner._draining = False
+    runner._queue_during_drain_enabled = lambda: False
+    runner._status_action_gerund = lambda: "restarting"
+    runner.hooks = SimpleNamespace(emit=AsyncMock(), loaded_hooks=False)
+    runner._handle_help_command = AsyncMock(return_value="help ok")
+
+    result = await runner._handle_message(_make_channel_event("-100123", "/help"))
+
+    assert result == "help ok"
+    runner._handle_help_command.assert_awaited_once()
 
 
 @pytest.mark.asyncio
