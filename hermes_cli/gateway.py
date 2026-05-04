@@ -1612,8 +1612,6 @@ _PLATFORMS = [
             {"name": "TELEGRAM_ALLOWED_USERS", "prompt": "Allowed user IDs (comma-separated)", "password": False,
              "is_allowlist": True,
              "help": "Paste your user ID from step 4 above."},
-            {"name": "TELEGRAM_ALLOWED_CHATS", "prompt": "Allowed channel/chat IDs for channel posts (comma-separated, optional)", "password": False,
-             "help": "Add Telegram channel IDs like -1001234567890 when Hermes should process channel posts."},
             {"name": "TELEGRAM_HOME_CHANNEL", "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)", "password": False,
              "help": "For DMs, this is your user ID. You can set it later by typing /set-home in chat."},
         ],

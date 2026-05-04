@@ -1608,14 +1608,6 @@ def _setup_telegram():
                     if allowed_users:
                         save_env_value("TELEGRAM_ALLOWED_USERS", allowed_users.replace(" ", ""))
                         print_success("Telegram allowlist configured")
-            if not get_env_value("TELEGRAM_ALLOWED_CHATS"):
-                print_info("📣 Optional: authorize Telegram channel posts by channel ID")
-                if prompt_yes_no("Add allowed channel IDs now?", False):
-                    print_info("   Add channel IDs like -1001234567890 if Hermes should read channel posts")
-                    allowed_chats = prompt("Allowed channel IDs (comma-separated)")
-                    if allowed_chats:
-                        save_env_value("TELEGRAM_ALLOWED_CHATS", allowed_chats.replace(" ", ""))
-                        print_success("Telegram channel allowlist configured")
             return
 
     print_info("Create a bot via @BotFather on Telegram")
@@ -1639,16 +1631,6 @@ def _setup_telegram():
         print_success("Telegram allowlist configured - only listed users can use the bot")
     else:
         print_info("⚠️  No allowlist set - anyone who finds your bot can use it!")
-
-    print()
-    print_info("📣 Optional: authorize Telegram channel posts by channel ID")
-    print_info("   Add channel IDs like -1001234567890 if Hermes should read channel posts")
-    allowed_chats = prompt(
-        "Allowed channel IDs for channel posts (comma-separated, leave empty to skip)"
-    )
-    if allowed_chats:
-        save_env_value("TELEGRAM_ALLOWED_CHATS", allowed_chats.replace(" ", ""))
-        print_success("Telegram channel allowlist configured")
 
     print()
     print_info("📬 Home Channel: where Hermes delivers cron job results,")

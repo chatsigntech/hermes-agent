@@ -1168,13 +1168,6 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "messaging",
     },
-    "TELEGRAM_ALLOWED_CHATS": {
-        "description": "Comma-separated Telegram chat/channel IDs allowed for channel posts",
-        "prompt": "Allowed Telegram chat or channel IDs (comma-separated)",
-        "url": None,
-        "password": False,
-        "category": "messaging",
-    },
     "DISCORD_BOT_TOKEN": {
         "description": "Discord bot token from Developer Portal",
         "prompt": "Discord bot token",

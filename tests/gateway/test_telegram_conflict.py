@@ -43,15 +43,6 @@ def _no_auto_discovery(monkeypatch):
     async def _noop():
         return []
     monkeypatch.setattr("gateway.platforms.telegram.discover_fallback_ips", _noop)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_URL", raising=False)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_PORT", raising=False)
-    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
-    # Neutralize the SNI-block probe so tests stay independent of the host
-    # network (on a real DPI'd network, probe would trip the IP-direct branch
-    # and short-circuit the Application.builder mock chain).
-    monkeypatch.setattr(
-        "gateway.platforms.telegram.probe_sni_block", lambda **kwargs: None,
-    )
     # Mock HTTPXRequest so the builder chain doesn't fail
     monkeypatch.setattr("gateway.platforms.telegram.HTTPXRequest", lambda **kwargs: MagicMock())
 

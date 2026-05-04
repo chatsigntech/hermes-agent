@@ -8,8 +8,7 @@ def _would_warn():
     """Replicate the startup allowlist warning logic. Returns True if warning fires."""
     _any_allowlist = any(
         os.getenv(v)
-        for v in ("TELEGRAM_ALLOWED_USERS", "TELEGRAM_ALLOWED_CHATS",
-                   "DISCORD_ALLOWED_USERS",
+        for v in ("TELEGRAM_ALLOWED_USERS", "DISCORD_ALLOWED_USERS",
                    "WHATSAPP_ALLOWED_USERS", "SLACK_ALLOWED_USERS",
                    "SIGNAL_ALLOWED_USERS", "SIGNAL_GROUP_ALLOWED_USERS",
                    "EMAIL_ALLOWED_USERS",
@@ -36,10 +35,6 @@ class TestAllowlistStartupCheck:
 
     def test_signal_group_allowed_users_suppresses_warning(self):
         with patch.dict(os.environ, {"SIGNAL_GROUP_ALLOWED_USERS": "user1"}, clear=True):
-            assert _would_warn() is False
-
-    def test_telegram_allowed_chats_suppresses_warning(self):
-        with patch.dict(os.environ, {"TELEGRAM_ALLOWED_CHATS": "-1001234567890"}, clear=True):
             assert _would_warn() is False
 
     def test_telegram_allow_all_users_suppresses_warning(self):

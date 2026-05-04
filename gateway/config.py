@@ -620,11 +620,6 @@ def load_gateway_config() -> GatewayConfig:
                 if "mention_patterns" in telegram_cfg and not os.getenv("TELEGRAM_MENTION_PATTERNS"):
                     import json as _json
                     os.environ["TELEGRAM_MENTION_PATTERNS"] = _json.dumps(telegram_cfg["mention_patterns"])
-                allowed_channels = telegram_cfg.get("allowed_channels")
-                if allowed_channels is not None and not os.getenv("TELEGRAM_ALLOWED_CHATS"):
-                    if isinstance(allowed_channels, list):
-                        allowed_channels = ",".join(str(v) for v in allowed_channels)
-                    os.environ["TELEGRAM_ALLOWED_CHATS"] = str(allowed_channels)
                 frc = telegram_cfg.get("free_response_chats")
                 if frc is not None and not os.getenv("TELEGRAM_FREE_RESPONSE_CHATS"):
                     if isinstance(frc, list):

@@ -1518,8 +1518,7 @@ class GatewayRunner:
         # Warn if no user allowlists are configured and open access is not opted in
         _any_allowlist = any(
             os.getenv(v)
-            for v in ("TELEGRAM_ALLOWED_USERS", "TELEGRAM_ALLOWED_CHATS",
-                       "DISCORD_ALLOWED_USERS",
+            for v in ("TELEGRAM_ALLOWED_USERS", "DISCORD_ALLOWED_USERS",
                        "WHATSAPP_ALLOWED_USERS", "SLACK_ALLOWED_USERS",
                        "SIGNAL_ALLOWED_USERS", "SIGNAL_GROUP_ALLOWED_USERS",
                        "EMAIL_ALLOWED_USERS",
@@ -1549,8 +1548,7 @@ class GatewayRunner:
             logger.warning(
                 "No user allowlists configured. All unauthorized users will be denied. "
                 "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.hermes/.env to allow open access, "
-                "or configure platform allowlists "
-                "(e.g., TELEGRAM_ALLOWED_USERS=your_id or TELEGRAM_ALLOWED_CHATS=-1001234567890)."
+                "or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id)."
             )
         
         # Discover and load event hooks
@@ -2296,7 +2294,6 @@ class GatewayRunner:
         Checks in order:
         1. Per-platform allow-all flag (e.g., DISCORD_ALLOW_ALL_USERS=true)
         2. Environment variable allowlists (TELEGRAM_ALLOWED_USERS, etc.)
-           and Telegram channel allowlists
         3. DM pairing approved list
         4. Global allow-all (GATEWAY_ALLOW_ALL_USERS=true)
         5. Default: deny
@@ -2308,23 +2305,6 @@ class GatewayRunner:
         # the adapter itself — no user allowlist applies.
         if source.platform in (Platform.HOMEASSISTANT, Platform.WEBHOOK):
             return True
-
-        if source.platform == Platform.TELEGRAM and source.chat_type == "channel":
-            if os.getenv("TELEGRAM_ALLOW_ALL_USERS", "").lower() in ("true", "1", "yes"):
-                return True
-            if os.getenv("GATEWAY_ALLOW_ALL_USERS", "").lower() in ("true", "1", "yes"):
-                return True
-
-            allowed_chats = os.getenv("TELEGRAM_ALLOWED_CHATS", "").strip()
-            if not allowed_chats:
-                return False
-
-            allowed_chat_ids = {
-                chat_id.strip() for chat_id in allowed_chats.split(",") if chat_id.strip()
-            }
-            if "*" in allowed_chat_ids:
-                return True
-            return bool(source.chat_id and source.chat_id in allowed_chat_ids)
 
         user_id = source.user_id
         if not user_id:
@@ -2440,9 +2420,7 @@ class GatewayRunner:
         # are system-generated and must skip user authorization.
         if getattr(event, "internal", False):
             pass
-        elif source.user_id is None and not (
-            source.platform == Platform.TELEGRAM and source.chat_type == "channel"
-        ):
+        elif source.user_id is None:
             # Messages with no user identity (Telegram service messages,
             # channel forwards, anonymous admin actions) cannot be
             # authorized — drop silently instead of triggering the pairing
