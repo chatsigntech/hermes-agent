@@ -278,23 +278,35 @@ git rebase upstream/main
 
 ---
 
-## 9. 决策建议（要确认就 ✓，不同意就改）
+## 9. 决策建议与执行结果
 
-- [ ] **B1, B3, B5, B6, B7 全部 PR**（共 5 条 fix）。这些都是真 bug fix 或独立增强，让 maintainer 决定要不要，不预设立场
-- [ ] **B2 (redact) 先丢弃**。upstream 257 行同区域 vs 我们 47 行，分歧太大；如果有具体场景被遗漏，等 merge upstream 后再单独提 fix（基于上游新 API）
-- [ ] **B4 (email replies + attachments) 走 Issue 路径**，不直接 PR。先听 maintainer 意见再决定
-- [ ] **fork 仓库名用默认 `hermes-agent`**，不重命名
-- [ ] **建跟踪表 `docs/plans/upstream-sync-tracker.md`**，列每个 PR：commit SHA / PR # / 状态（draft / open / merged / rejected）/ merge 时间 / 备注
+- [x] **B1, B5, B6, B7 准备 PR**（4 条 fix）：本地分支已就绪，cherry-pick + 解冲突 + 完整 body。等明确授权后 push + create PR
+- [x] **B3 中止**：实测发现它依赖 B4 引入的 `_pending_email_replies` 字段，upstream 完全没有，独立 PR 会引入悬空字段。等 B4 issue 流程结果一并处理
+- [x] **B2 (redact) 暂缓**：调研后发现 upstream 已覆盖 query string + JSON body + 已知 prefix，但**不覆盖**自然语言 `password: hunter2` / `密码：xxx` / `password = input()` 模式，还有真实价值。但需基于 upstream 新 API 重写，不是简单 cherry-pick。先做前 4 个 PR 拿反馈节奏，再决定是否值得投入重写
+- [x] **B4 (email replies + attachments) 走 Issue 路径**：草稿已写到 `docs/plans/upstream-issue-b4-email-replies.md`，待人工去 GitHub web 提交 issue
+- [x] **fork 仓库名用默认 `hermes-agent`**：fork 已建在 `chatsigntech/hermes-agent`
+- [ ] **建跟踪表 `docs/plans/upstream-sync-tracker.md`**：等真有 PR 提交后再起
 
-如果都 ✓，按第 8 节阶段 1 直接开干。
+## 9.1 当前实际状态（2026-05-05）
 
-如果对 B2 / B4 有不同意见，下面三个常见替代选择：
+| 状态 | 项目 | 备注 |
+|---|---|---|
+| ✅ 完成 | 策略文档 commit 到 main | 2 个 commit |
+| ✅ 完成 | fork + B7 push 到 origin | 5月4日已 push 到 `chatsigntech/hermes-agent` 的 `fix-gateway-prefer-active-runtime-env` 分支 |
+| ✅ 完成 | B7 PR-ready 分支 `fix-gateway-prefer-active-runtime-env` | commit `f25f696a`，无冲突，cherry-pick clean |
+| ✅ 完成 | B6 PR-ready 分支 `fix-email-silence-unauthorized-senders` | commit `f9199177`，1 测试文件冲突已解，重写更详细 body |
+| ✅ 完成 | B1 PR-ready 分支 `fix-auth-honor-config-base-url` | commit `59e6579b`，1 文件冲突已解（适配 upstream 把 kimi-coding 扩展到 `("kimi-coding", "kimi-coding-cn")` tuple） |
+| ✅ 完成 | B5 PR-ready 分支 `fix-memory-block-unresolved-notes` | commit `e71905dc`，scope 缩到只剩 `tools/memory_tool.py`（gateway/run.py + run_agent.py 的 prompt 改动被 upstream 重构作废，2 个测试文件被 upstream 删掉） |
+| ✅ 完成 | B4 issue 草稿 | `docs/plans/upstream-issue-b4-email-replies.md` |
+| ❌ 中止 | B3 cherry-pick | 依赖 B4 字段，分支已删 |
+| ⏸ 延后 | B2 重写 | 决策依据：先看前 4 个 PR 反馈 |
+| ⏸ 等待授权 | 4 个 PR `git push origin <branch>` + `gh pr create` | 上次 B7 push 之后用户表达了希望谨慎，需明确授权后再 batch 推 |
+| ⏸ 等待人工 | B4 issue 提交 | 需要去 GitHub web 提交 |
 
-| 改动 | 含义 |
-|---|---|
-| B2 改成 PR | 接受需要重写；先研究 upstream `mask_secret` API，2-4h 工作量 |
-| B4 改成直接拆 PR | 跳过 issue 直接拆 4 个 PR；快但可能被一并拒绝 |
-| B6 改成先开 issue | 增加 1-2 周等待期，换稳妥 |
+下一步用户决策：
+1. 授权 push + create 4 个 PR（一次性 batch）
+2. 还是先 push 不 create PR，让你 review fork 上的分支
+3. 还是再等等，先 review 当前所有本地 commits
 
 ---
 
