@@ -293,10 +293,10 @@ git rebase upstream/main
 |---|---|---|
 | ✅ 完成 | 策略文档 commit 到 main | 2 个 commit |
 | ✅ 完成 | fork + B7 push 到 origin | 5月4日已 push 到 `chatsigntech/hermes-agent` 的 `fix-gateway-prefer-active-runtime-env` 分支 |
-| ✅ 完成 | B7 PR-ready 分支 `fix-gateway-prefer-active-runtime-env` | commit `f25f696a`，无冲突，cherry-pick clean |
-| ✅ 完成 | B6 PR-ready 分支 `fix-email-silence-unauthorized-senders` | commit `f9199177`，1 测试文件冲突已解，重写更详细 body |
-| ✅ 完成 | B1 PR-ready 分支 `fix-auth-honor-config-base-url` | commit `59e6579b`，1 文件冲突已解（适配 upstream 把 kimi-coding 扩展到 `("kimi-coding", "kimi-coding-cn")` tuple） |
-| ✅ 完成 | B5 PR-ready 分支 `fix-memory-block-unresolved-notes` | commit `e71905dc`，scope 缩到只剩 `tools/memory_tool.py`（gateway/run.py + run_agent.py 的 prompt 改动被 upstream 重构作废，2 个测试文件被 upstream 删掉） |
+| ✅ 完成 | B7 PR-ready 分支 `fix-gateway-prefer-active-runtime-env` | commit `b6929fbb`（simplify 后），无冲突 cherry-pick + 重命名混淆测试类 + 软化 body |
+| ✅ 完成 | B6 PR-ready 分支 `fix-email-silence-unauthorized-senders` | commit `5919e358`（simplify 后），1 测试文件冲突已解 + 删 `gateway/run.py` 冗余 EMAIL guard |
+| ✅ 完成 | B1 PR-ready 分支 `fix-auth-honor-config-base-url` | commit `551b8b8a`（simplify 后），1 文件冲突已解（适配 kimi-coding tuple）+ `get_api_key_provider_status` 也读 cfg_url 保持 doctor 一致 + 例外加 debug log |
+| ✅ 完成 | B5 PR-ready 分支 `fix-memory-block-unresolved-notes` | commit `b7e19bfb`（simplify 后），scope 缩到 `tools/memory_tool.py` + 中文 pattern 加非中文字边界（避免误伤 `期待确认`）+ 清理 commit body |
 | ✅ 完成 | B4 issue 草稿 | `docs/plans/upstream-issue-b4-email-replies.md` |
 | ❌ 中止 | B3 cherry-pick | 依赖 B4 字段，分支已删 |
 | ⏸ 延后 | B2 重写 | 决策依据：先看前 4 个 PR 反馈 |
@@ -307,6 +307,24 @@ git rebase upstream/main
 1. 授权 push + create 4 个 PR（一次性 batch）
 2. 还是先 push 不 create PR，让你 review fork 上的分支
 3. 还是再等等，先 review 当前所有本地 commits
+
+## 9.2 Simplify pass（2026-05-05）
+
+3 个 review agent 并行检查 4 个 PR 分支后，按高/中影响 amend 了 9 个 finding：
+
+| 分支 | amend 内容 |
+|---|---|
+| B7 | 重命名 `TestGeneratedUnit*` → `TestSystemdUnit*` / `TestLaunchdPlist*`（避免单复数差一字母混淆）；类间补 PEP-8 空行；commit body 软化 "Tests cover all branches" 的过宽宣称 |
+| B6 | 删 `gateway/run.py` 冗余 `if Platform.EMAIL: return None`（config 层已 hardcode "ignore"，dead code）；test_config.py 加方法间空行 |
+| B1 | `_configured_provider_base_url` 例外加 debug log；`get_api_key_provider_status` 也用 `cfg_url`，保证 `hermes doctor` 显示与运行时一致 |
+| B5 | 中文 patterns `需要*` `待*` 加非中文字符边界（`(?:^|[\s。，；,;:：!！?？])`），避免误伤 `期待确认` `等待确认排查`；commit body 删"原 commit 也改过 X 但被 upstream 重构掉"的 fork 历史 parenthetical（不属于 upstream PR 内容） |
+
+跳过的（设计取舍 / 重构风险 / nit）：
+- B5 ephemeral pattern 对合法持续待办（"Bob needs to confirm SOC2 quarterly"）的误伤——真实设计取舍，留 maintainer 在 review 中讨论
+- B7 `.resolve()` + `.exists()` + `.is_dir()` 重复 stat——admin 路径，开销可忽略，重构风险更高
+- B1 抽 helper 复用 config 读取——涉及 `load_config` vs `read_raw_config` 语义差异，cherry-pick PR 不宜带这种重构
+
+**注意**：4 个分支的 commit SHA 全部因 amend 而变化。如果之前 push 过 fork（B7 的 `f25f696a`），下次 push 必须 `--force-with-lease`。
 
 ---
 
