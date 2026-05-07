@@ -1562,7 +1562,7 @@ class BasePlatformAdapter(ABC):
             # session lifecycle and its cleanup races with the running task
             # (see PR #4926).
             cmd = event.get_command()
-            if cmd in ("approve", "deny", "mailapprove", "maildeny", "status", "stop", "new", "reset", "background", "restart"):
+            if cmd in ("approve", "deny", "mailapprove", "maildeny", "mailread", "status", "stop", "new", "reset", "background", "restart"):
                 logger.debug(
                     "[%s] Command '/%s' bypassing active-session guard for %s",
                     self.name, cmd, session_key,

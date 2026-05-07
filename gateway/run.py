@@ -2795,6 +2795,9 @@ class GatewayRunner:
         if canonical == "maildeny":
             return await self._handle_maildeny_command(event)
 
+        if canonical == "mailread":
+            return await self._handle_mailread_command(event)
+
         if canonical == "update":
             return await self._handle_update_command(event)
 
@@ -5060,7 +5063,46 @@ class GatewayRunner:
 
         self._save_pending_email_replies()
         return f"🗑️ Email draft `{draft_id}` discarded."
-    
+
+    async def _handle_mailread_command(self, event: MessageEvent) -> str:
+        """Mark email(s) as \\Seen on the IMAP server.
+
+        Polling never sets \\Seen (uses $HermesProcessed for internal dedup),
+        so the user controls read/unread state explicitly via this command.
+
+        Forms:
+          /mailread all          → flip every $HermesProcessed UNSEEN to \\Seen
+          /mailread <message-id> → flip a specific Message-ID to \\Seen
+        """
+        adapter = self.adapters.get(Platform.EMAIL)
+        if adapter is None:
+            return "Email platform is not connected."
+
+        arg = event.get_command_args().strip()
+        if not arg:
+            return (
+                "Usage:\n"
+                "  /mailread all                  — mark every Hermes-processed unread\n"
+                "  /mailread <Message-ID>         — mark a specific email"
+            )
+
+        if arg.lower() == "all":
+            count = await asyncio.to_thread(adapter.mark_all_processed_seen)
+            if count == 0:
+                return "No Hermes-processed unread emails to mark."
+            return f"✓ Marked {count} email(s) as \\Seen."
+
+        # Treat any other arg as a Message-ID lookup
+        message_id = arg
+        uid = await asyncio.to_thread(adapter.find_uid_by_message_id, message_id)
+        if not uid:
+            return f"No email found with Message-ID `{message_id}`."
+        ok = await asyncio.to_thread(adapter.mark_uid_seen, uid)
+        return (
+            f"✓ Marked `{message_id}` as \\Seen."
+            if ok else f"Failed to mark `{message_id}` as \\Seen (see logs)."
+        )
+
     @staticmethod
     def _get_guild_id(event: MessageEvent) -> Optional[int]:
         """Extract Discord guild_id from the raw message object."""

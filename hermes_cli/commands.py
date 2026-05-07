@@ -84,6 +84,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True, args_hint="<draft_id>", aliases=("approve-email",)),
     CommandDef("maildeny", "Discard a pending email draft", "Session",
                gateway_only=True, args_hint="<draft_id>", aliases=("deny-email",)),
+    CommandDef("mailread", "Mark email as \\Seen on IMAP server "
+               "(`all` for every Hermes-processed unread, or a Message-ID for one)",
+               "Session",
+               gateway_only=True, args_hint="<all|message-id>"),
     CommandDef("background", "Run a prompt in the background", "Session",
                aliases=("bg",), args_hint="<prompt>"),
     CommandDef("btw", "Ephemeral side question using session context (no tools, not persisted)", "Session",
