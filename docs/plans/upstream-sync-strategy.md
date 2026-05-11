@@ -339,3 +339,17 @@ git rebase upstream/main
 - **fork 慢慢变成事实上的"另一个项目"**，失去 upstream 改进红利
 
 按上面阶段 1-4 推进，1 个月内可以回到"几乎零摩擦同步"的状态。
+
+---
+
+## 11. 特殊模块：Secret Vault（保险箱）
+
+vault 模块在 v5 重新定位后变为**独立 Python 包**（不在 hermes 仓内），
+跟 hermes 主代码 **0 行嵌入** + **0 git 关系**。
+
+→ hermes upstream sync 时不涉及 vault，普通流程即可。
+
+唯一关联动作：每次 sync 后跑 `hermes-vault check-upstream-drift`，
+检测 hermes 是否新增官方 redactor（→ vault fallback 自动让位）。
+
+详细见 [`secret-vault-design.md`](./secret-vault-design.md) §16。
