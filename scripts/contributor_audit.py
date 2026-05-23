@@ -40,7 +40,7 @@ REPO_ROOT = SCRIPT_DIR.parent
 IGNORED_PATTERNS = [
     re.compile(r"^Claude", re.IGNORECASE),
     re.compile(r"^Copilot$", re.IGNORECASE),
-    re.compile(r"^Cursor\s+Agent$", re.IGNORECASE),
+    re.compile(r"^Cursor(\s+Agent)?$", re.IGNORECASE),
     re.compile(r"^GitHub\s*Actions?$", re.IGNORECASE),
     re.compile(r"^dependabot", re.IGNORECASE),
     re.compile(r"^renovate", re.IGNORECASE),
@@ -291,7 +291,7 @@ def check_release_file(release_file, all_contributors):
         missing: set of handles NOT found in the file
     """
     try:
-        content = Path(release_file).read_text()
+        content = Path(release_file).read_text(encoding="utf-8")
     except FileNotFoundError:
         print(f"  [error] Release file not found: {release_file}", file=sys.stderr)
         return set(), set(all_contributors)
@@ -332,6 +332,16 @@ def main():
         "--release-file",
         default=None,
         help="Path to a release notes file to check for missing contributors",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit with code 1 if new unmapped emails are found (for CI)",
+    )
+    parser.add_argument(
+        "--diff-base",
+        default=None,
+        help="Git ref to diff against (only flag emails from commits after this ref)",
     )
     args = parser.parse_args()
 
@@ -398,6 +408,42 @@ def main():
         for email, name in sorted(all_unknowns.items()):
             print(f'  "{email}": "{name}",')
 
+    # ---- Strict mode: fail CI if new unmapped emails are introduced ----
+    if args.strict and all_unknowns:
+        # In strict mode, check if ANY unknown emails come from commits in this
+        # PR's diff range (new unmapped emails that weren't there before).
+        # This is the CI gate: existing unknowns are grandfathered, but new
+        # commits must have their author email in AUTHOR_MAP.
+        new_unknowns = {}
+        if args.diff_base:
+            # Only flag emails from commits after diff_base
+            new_commits_output = git(
+                "log", f"{args.diff_base}..HEAD",
+                "--format=%ae", "--no-merges",
+            )
+            new_emails = set(new_commits_output.splitlines()) if new_commits_output else set()
+            for email, name in all_unknowns.items():
+                if email in new_emails:
+                    new_unknowns[email] = name
+        else:
+            new_unknowns = all_unknowns
+
+        if new_unknowns:
+            print()
+            print(f"=== STRICT MODE FAILURE: {len(new_unknowns)} new unmapped email(s) ===")
+            print("Add these to AUTHOR_MAP in scripts/release.py before merging:")
+            print()
+            for email, name in sorted(new_unknowns.items()):
+                print(f'    "{email}": "<github-username>",')
+            print()
+            print("To find the GitHub username:")
+            print("  gh api 'search/users?q=EMAIL+in:email' --jq '.items[0].login'")
+            strict_failed = True
+        else:
+            strict_failed = False
+    else:
+        strict_failed = False
+
     # ---- Release file comparison ----
     if args.release_file:
         print()
@@ -418,6 +464,9 @@ def main():
 
     print()
     print("Done.")
+
+    if strict_failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
