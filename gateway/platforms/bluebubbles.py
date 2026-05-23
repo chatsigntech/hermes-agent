@@ -383,7 +383,10 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        text = strip_markdown(content or "")
+        # Use format_message (not raw strip_markdown) so iMessage-specific
+        # link preservation kicks in — strip_markdown drops [text](url)'s
+        # URL, format_message converts to "text url" first.
+        text = self.format_message(content or "")
         if not text:
             return SendResult(success=False, error="BlueBubbles send requires text")
         chunks = self.truncate_message(text, max_length=self.MAX_MESSAGE_LENGTH)
@@ -640,6 +643,11 @@ class BlueBubblesAdapter(BasePlatformAdapter):
         return info
 
     def format_message(self, content: str) -> str:
+        # iMessage supports clickable URLs natively. Convert markdown
+        # links [text](url) to "text url" first so iMessage detects +
+        # linkifies the URL — the shared strip_markdown drops URLs
+        # (correct for SMS, wrong for iMessage).
+        content = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 \2", content)
         return strip_markdown(content)
 
     # ------------------------------------------------------------------
