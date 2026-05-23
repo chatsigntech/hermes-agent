@@ -300,33 +300,16 @@ class EmailAdapter(BasePlatformAdapter):
             imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
             imap.login(self._address, self._password)
             _send_imap_id(imap)
+            # Mark all existing messages as seen so we only process new ones
             imap.select("INBOX")
-            # Mark all currently-unprocessed messages with the custom IMAP keyword
-            # `$HermesProcessed`. We use this instead of \Seen so the user's
-            # mailbox unread state is preserved — only the user (or a manual
-            # /mailread) should ever flip \Seen.
-            status, data = imap.uid("search", None, "NOT", "KEYWORD", "$HermesProcessed")
+            status, data = imap.uid("search", None, "ALL")
             if status == "OK" and data and data[0]:
-                uids = data[0].split()
-                if uids:
-                    uid_set = b",".join(uids)
-                    try:
-                        imap.uid("store", uid_set, "+FLAGS", "($HermesProcessed)")
-                    except Exception as e:
-                        logger.warning(
-                            "[Email] initial $HermesProcessed mark failed (%s); "
-                            "in-memory dedup only this session", e,
-                        )
-                    for uid in uids:
-                        self._seen_uids.add(uid)
+                for uid in data[0].split():
+                    self._seen_uids.add(uid)
             # Keep only the most recent UIDs to prevent unbounded growth
             self._trim_seen_uids()
             imap.logout()
-            logger.info(
-                "[Email] IMAP connection test passed. %d existing messages "
-                "marked as $HermesProcessed (\\Seen left untouched).",
-                len(self._seen_uids),
-            )
+            logger.info("[Email] IMAP connection test passed. %d existing messages skipped.", len(self._seen_uids))
         except Exception as e:
             logger.error("[Email] IMAP connection failed: %s", e)
             return False
@@ -388,12 +371,7 @@ class EmailAdapter(BasePlatformAdapter):
                 _send_imap_id(imap)
                 imap.select("INBOX")
 
-                # Persistent dedup uses the custom $HermesProcessed keyword
-                # rather than \Seen, so polling does NOT mark mail as read in
-                # the user's other clients (Gmail, Mail.app, etc.).
-                status, data = imap.uid(
-                    "search", None, "NOT", "KEYWORD", "$HermesProcessed",
-                )
+                status, data = imap.uid("search", None, "UNSEEN")
                 if status != "OK" or not data or not data[0]:
                     return results
 
@@ -405,19 +383,9 @@ class EmailAdapter(BasePlatformAdapter):
                     if len(self._seen_uids) > self._seen_uids_max:
                         self._trim_seen_uids()
 
-                    # BODY.PEEK[] = fetch full message WITHOUT setting \Seen.
-                    status, msg_data = imap.uid("fetch", uid, "(BODY.PEEK[])")
+                    status, msg_data = imap.uid("fetch", uid, "(RFC822)")
                     if status != "OK":
                         continue
-                    # Mark this UID as processed by Hermes so the next poll
-                    # (or a restart-bootstrapped poll) won't re-deliver it.
-                    try:
-                        imap.uid("store", uid, "+FLAGS", "($HermesProcessed)")
-                    except Exception as e:
-                        logger.warning(
-                            "[Email] store $HermesProcessed on uid %s failed: %s",
-                            uid, e,
-                        )
 
                     raw_email = msg_data[0][1]
                     msg = email_lib.message_from_bytes(raw_email)
@@ -593,87 +561,6 @@ class EmailAdapter(BasePlatformAdapter):
 
         logger.info("[Email] Sent reply to %s (subject: %s)", to_addr, subject)
         return msg_id
-
-    # ── User-controlled \Seen marking ─────────────────────────────────────
-    # Polling intentionally never sets \Seen (uses $HermesProcessed for
-    # internal dedup instead — see _fetch_new_messages). The user's mailbox
-    # unread state is theirs to control. These helpers expose the only paths
-    # that should ever set \Seen: an explicit user command (`/mailread …`)
-    # or an authenticated outbound reply.
-
-    def mark_uid_seen(self, uid) -> bool:
-        """Set \\Seen on a single IMAP UID. Returns True iff the IMAP STORE
-        succeeded. Caller is expected to have authenticated the request."""
-        if isinstance(uid, str):
-            uid = uid.encode()
-        try:
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
-            try:
-                imap.login(self._address, self._password)
-                imap.select("INBOX")
-                status, _ = imap.uid("store", uid, "+FLAGS", "(\\Seen)")
-                return status == "OK"
-            finally:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.error("[Email] mark_uid_seen(%r) failed: %s", uid, e)
-            return False
-
-    def mark_all_processed_seen(self) -> int:
-        """Bulk \\Seen for every $HermesProcessed message that is still UNSEEN.
-        Returns the count of UIDs flipped (0 if none / error)."""
-        try:
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
-            try:
-                imap.login(self._address, self._password)
-                imap.select("INBOX")
-                status, data = imap.uid(
-                    "search", None, "KEYWORD", "$HermesProcessed", "UNSEEN",
-                )
-                if status != "OK" or not data or not data[0]:
-                    return 0
-                uids = data[0].split()
-                if not uids:
-                    return 0
-                imap.uid("store", b",".join(uids), "+FLAGS", "(\\Seen)")
-                return len(uids)
-            finally:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.error("[Email] mark_all_processed_seen failed: %s", e)
-            return 0
-
-    def find_uid_by_message_id(self, message_id: str):
-        """Look up the IMAP UID for a Message-ID header. Returns bytes or None."""
-        if not message_id:
-            return None
-        # IMAP search needs angle-bracketed RFC822 Message-ID literal.
-        if not message_id.startswith("<"):
-            message_id = f"<{message_id}>"
-        try:
-            imap = imaplib.IMAP4_SSL(self._imap_host, self._imap_port, timeout=30)
-            try:
-                imap.login(self._address, self._password)
-                imap.select("INBOX")
-                status, data = imap.uid("search", None, "HEADER", "Message-ID", message_id)
-                if status != "OK" or not data or not data[0]:
-                    return None
-                uids = data[0].split()
-                return uids[-1] if uids else None
-            finally:
-                try:
-                    imap.logout()
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.error("[Email] find_uid_by_message_id(%r) failed: %s", message_id, e)
-            return None
 
     async def send_typing(self, chat_id: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Email has no typing indicator — no-op."""
